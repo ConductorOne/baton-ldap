@@ -18,6 +18,20 @@ var (
 		},
 		Annotations: annotationsForUserResourceType(),
 	}
+	resourceTypeGroup = &v2.ResourceType{
+		Id:          "group",
+		DisplayName: "Group",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_GROUP,
+		},
+	}
+	resourceTypeRole = &v2.ResourceType{
+		Id:          "role",
+		DisplayName: "Role",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_ROLE,
+		},
+	}
 )
 
 type LDAP struct {
@@ -27,6 +41,8 @@ type LDAP struct {
 func (l *LDAP) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
 		userBuilder(l.client),
+		groupBuilder(l.client),
+		roleBuilder(l.client),
 	}
 }
 
