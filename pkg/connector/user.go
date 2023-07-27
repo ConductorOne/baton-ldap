@@ -33,11 +33,11 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return u.resourceType
 }
 
-func parseUserNames(user *ldap.Entry) (firstName, lastName, displayName string) {
+func parseUserNames(user *ldap.Entry) (string, string, string) {
 	fullName := user.GetAttributeValue(attrUserCommonName)
-	firstName = user.GetAttributeValue(attrFirstName)
-	lastName = user.GetAttributeValue(attrLastName)
-	displayName = user.GetAttributeValue(attrUserDisplayName)
+	firstName := user.GetAttributeValue(attrFirstName)
+	lastName := user.GetAttributeValue(attrLastName)
+	displayName := user.GetAttributeValue(attrUserDisplayName)
 
 	if firstName == "" || lastName == "" {
 		firstName, lastName = splitFullName(fullName)
@@ -47,7 +47,7 @@ func parseUserNames(user *ldap.Entry) (firstName, lastName, displayName string) 
 		displayName = fullName
 	}
 
-	return
+	return firstName, lastName, displayName
 }
 
 // Create a new connector resource for an LDAP User.
@@ -56,7 +56,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	userId := user.GetAttributeValue(attrUserUID)
 
 	profile := map[string]interface{}{
-		"login":      userId,
+		"user_id":    userId,
 		"first_name": firstName,
 		"last_name":  lastName,
 		"path":       user.DN,
