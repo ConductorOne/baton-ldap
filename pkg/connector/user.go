@@ -11,18 +11,17 @@ import (
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 )
 
-// InetOrgPerson and its parent resources structure
-// https://docs.oracle.com/cd/E19225-01/820-6551/bzbox/index.html
-// https://docs.oracle.com/cd/E19225-01/820-6551/bzboz/index.html
-// https://docs.oracle.com/cd/E19225-01/820-6551/bzbpb/index.html
+// InetOrgPerson resource structure
+// https://datatracker.ietf.org/doc/html/rfc2798
 const (
 	userFilter = "(objectClass=inetOrgPerson)"
 
 	attrUserUID         = "uid"
 	attrUserCommonName  = "cn"
+	attrFirstName       = "givenName"
+	attrLastName        = "sn"
 	attrUserMail        = "mail"
 	attrUserDisplayName = "displayName"
-	attrUserStatus      = "inetUserStatus"
 )
 
 type userResourceType struct {
@@ -34,10 +33,26 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return u.resourceType
 }
 
+func parseUserNames(user *ldap.Entry) (firstName, lastName, displayName string) {
+	fullName := user.GetAttributeValue(attrUserCommonName)
+	firstName = user.GetAttributeValue(attrFirstName)
+	lastName = user.GetAttributeValue(attrLastName)
+	displayName = user.GetAttributeValue(attrUserDisplayName)
+
+	if firstName == "" || lastName == "" {
+		firstName, lastName = splitFullName(fullName)
+	}
+
+	if displayName == "" {
+		displayName = fullName
+	}
+
+	return
+}
+
 // Create a new connector resource for an LDAP User.
 func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
-	fullName := user.GetAttributeValue(attrUserCommonName)
-	firstName, lastName := splitFullName(fullName)
+	firstName, lastName, displayName := parseUserNames(user)
 	userId := user.GetAttributeValue(attrUserUID)
 
 	profile := map[string]interface{}{
@@ -50,29 +65,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
 		rs.WithUserProfile(profile),
-	}
-
-	// possible values are active, inactive, and deleted
-	userStatus := user.GetAttributeValue(attrUserStatus)
-	switch userStatus {
-	case "active":
-		userTraitOptions = append(userTraitOptions, rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED))
-	case "inactive":
-		userTraitOptions = append(userTraitOptions, rs.WithStatus(v2.UserTrait_Status_STATUS_DISABLED))
-	case "deleted":
-		userTraitOptions = append(userTraitOptions, rs.WithStatus(v2.UserTrait_Status_STATUS_DELETED))
-	default:
-		userTraitOptions = append(userTraitOptions, rs.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED))
-	}
-
-	dAttr := user.GetAttributeValue(attrUserDisplayName)
-	cAttr := user.GetAttributeValue(attrUserCommonName)
-
-	var displayName string
-	if dAttr != "" {
-		displayName = dAttr
-	} else if cAttr != "" {
-		displayName = cAttr
+		rs.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
 	}
 
 	if displayName == "" {
