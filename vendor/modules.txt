@@ -150,6 +150,8 @@ github.com/conductorone/baton-sdk/pkg/tasks
 github.com/conductorone/baton-sdk/pkg/tasks/c1api
 github.com/conductorone/baton-sdk/pkg/tasks/local
 github.com/conductorone/baton-sdk/pkg/types
+github.com/conductorone/baton-sdk/pkg/types/entitlement
+github.com/conductorone/baton-sdk/pkg/types/grant
 github.com/conductorone/baton-sdk/pkg/types/resource
 github.com/conductorone/baton-sdk/pkg/ugrpc
 github.com/conductorone/baton-sdk/pkg/uhttp
@@ -382,6 +384,12 @@ golang.org/x/sys/windows/svc/mgr
 golang.org/x/term
 # golang.org/x/text v0.11.0
 ## explicit; go 1.17
+golang.org/x/text/cases
+golang.org/x/text/internal
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/tag
+golang.org/x/text/language
 golang.org/x/text/runes
 golang.org/x/text/secure/bidirule
 golang.org/x/text/transform

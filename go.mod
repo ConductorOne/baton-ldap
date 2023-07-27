@@ -9,7 +9,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.1
 	github.com/spf13/cobra v1.7.0
 	go.uber.org/zap v1.24.0
-	google.golang.org/protobuf v1.31.0
+	golang.org/x/text v0.11.0
 )
 
 require (
@@ -77,10 +77,10 @@ require (
 	golang.org/x/sync v0.3.0 // indirect
 	golang.org/x/sys v0.10.0 // indirect
 	golang.org/x/term v0.10.0 // indirect
-	golang.org/x/text v0.11.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230724170836-66ad5b6ff146 // indirect
 	google.golang.org/grpc v1.56.2 // indirect
+	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
