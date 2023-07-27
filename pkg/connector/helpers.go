@@ -65,8 +65,8 @@ func parseUID(memberDN string) (string, error) {
 }
 
 // Parses the member ids of a role or a group.
-func parseMembers(role *ldap.Entry, targetAttr string) ([]string, error) {
-	membersPayload := role.GetAttributeValues(targetAttr)
+func parseMembers(entry *ldap.Entry, targetAttr string) ([]string, error) {
+	membersPayload := entry.GetAttributeValues(targetAttr)
 
 	if len(membersPayload) == 0 {
 		return nil, nil
@@ -84,4 +84,52 @@ func parseMembers(role *ldap.Entry, targetAttr string) ([]string, error) {
 	}
 
 	return members, nil
+}
+
+// Id of entitlement has following format <resource_type>:<resource_id>:<entitlement_id>
+// extract resource_id from it.
+func extractResourceId(fullId string) (string, error) {
+	idParts := strings.Split(fullId, ":")
+
+	if len(idParts) != 3 {
+		return "", fmt.Errorf("invalid resource id: %s", fullId)
+	}
+
+	return idParts[1], nil
+}
+
+func containsMember(memberEntries []string, member string) bool {
+	for _, m := range memberEntries {
+		id, err := parseUID(m)
+		if err != nil {
+			continue
+		}
+
+		if id == member {
+			return true
+		}
+	}
+
+	return false
+}
+
+func removeMember(memberEntries []string, member string) ([]string, error) {
+	updatedEntries := make([]string, 0, len(memberEntries)-1)
+
+	for _, entry := range memberEntries {
+		id, err := parseUID(entry)
+		if err != nil {
+			return nil, err
+		}
+
+		if id != member {
+			updatedEntries = append(updatedEntries, entry)
+		}
+	}
+
+	return updatedEntries, nil
+}
+
+func addMember(memberEntries []string, entry string) []string {
+	return append(memberEntries, entry)
 }

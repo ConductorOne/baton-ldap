@@ -12,6 +12,8 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 const (
@@ -174,6 +176,139 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 	}
 
 	return rv, "", nil, nil
+}
+
+func (r *roleResourceType) findRoleMembers(ctx context.Context, role string) (string, []string, error) {
+	roleEntry, _, err := r.client.LdapSearch(
+		ctx,
+		fmt.Sprintf("(%s=%s)", attrRoleCommonName, role),
+		nil,
+		"",
+		1,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("ldap-connector: failed to get role %s: %w", role, err)
+	}
+
+	if len(roleEntry) == 0 {
+		return "", nil, fmt.Errorf("ldap-connector: failed to get role %s", role)
+	}
+
+	membersPayload := roleEntry[0].GetAttributeValues(attrRoleMember)
+
+	return roleEntry[0].DN, membersPayload, nil
+}
+
+func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"baton-ldap: only users can have role membership granted",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+
+		return nil, nil
+	}
+
+	roleId, err := extractResourceId(entitlement.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	// get all current members of the role
+	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)
+	if err != nil {
+		return nil, err
+	}
+
+	// check if principal is a member of the role
+	if containsMember(memberEntries, principal.Id.Resource) {
+		l.Warn(
+			"baton-ldap: cannot add user who already is a member of the role",
+			zap.String("role", entitlement.Id),
+			zap.String("user", principal.Id.Resource),
+		)
+
+		return nil, fmt.Errorf("ldap-connector: cannot add user who already is a member of the role")
+	}
+
+	principalEntry, err := r.client.CreateMemberEntry(principal.Id.Resource, memberEntries[0])
+	if err != nil {
+		return nil, err
+	}
+
+	updatedEntries := addMember(memberEntries, principalEntry)
+
+	// grant role memberships to the principal
+	err = r.client.LdapModify(
+		ctx,
+		roleDN,
+		attrRoleMember,
+		updatedEntries,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to grant role membership to user: %w", err)
+	}
+
+	return nil, nil
+}
+
+func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	entitlement := grant.Entitlement
+	principal := grant.Principal
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"baton-ldap: only users can have role membership revoked",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+	}
+
+	roleId, err := extractResourceId(entitlement.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	// get all current members of the role
+	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)
+	if err != nil {
+		return nil, err
+	}
+
+	// check if principal is a member of the role
+	if !containsMember(memberEntries, principal.Id.Resource) {
+		l.Warn(
+			"baton-ldap: cannot remove user from role they are not a member of",
+			zap.String("role", entitlement.Id),
+			zap.String("user", principal.Id.Resource),
+		)
+
+		return nil, fmt.Errorf("ldap-connector: cannot remove user from role they are not a member of")
+	}
+
+	// remove principal from members
+	updatedEntries, err := removeMember(memberEntries, principal.Id.Resource)
+	if err != nil {
+		return nil, err
+	}
+
+	// revoke role memberships from the principal
+	err = r.client.LdapModify(
+		ctx,
+		roleDN,
+		attrRoleMember,
+		updatedEntries,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to revoke role membership from user: %w", err)
+	}
+
+	return nil, nil
 }
 
 func roleBuilder(client *ldap.Client) *roleResourceType {

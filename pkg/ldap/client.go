@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -111,6 +112,39 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	}
 
 	return ret, nextPageToken, nil
+}
+
+func (c *Client) CreateMemberEntry(memberId string, sampleDN string) (string, error) {
+	sampleMemberDN, err := ldap.ParseDN(sampleDN)
+	if err != nil {
+		return "", fmt.Errorf("baton-ldap: failed to parse member DN %s: %w", sampleDN, err)
+	}
+
+	var memberBaseDN []string
+	// compose memberBaseDN from sample RDNs
+	for _, rdn := range sampleMemberDN.RDNs[1:] {
+		memberBaseDN = append(memberBaseDN, rdn.String())
+	}
+
+	return fmt.Sprintf("uid=%s,%s", memberId, strings.Join(memberBaseDN, ",")), nil
+}
+
+func (c *Client) LdapModify(ctx context.Context, dn string, attr string, newValues []string) error {
+	l := ctxzap.Extract(ctx)
+
+	err := c.getConnection(ctx, func(client *ldapConn) error {
+		modifyRequest := ldap.NewModifyRequest(dn, nil)
+
+		modifyRequest.Replace(attr, newValues)
+
+		return client.conn.Modify(modifyRequest)
+	})
+	if err != nil {
+		l.Error("baton-ldap: client failed to get connection", zap.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 func TestConnection(domain string) (*ldap.Conn, error) {
