@@ -212,10 +212,7 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, nil
 	}
 
-	roleId, err := extractResourceId(entitlement.Id)
-	if err != nil {
-		return nil, err
-	}
+	roleId := entitlement.Resource.Id.Resource
 
 	// get all current members of the role
 	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)
@@ -269,10 +266,7 @@ func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		)
 	}
 
-	roleId, err := extractResourceId(entitlement.Id)
-	if err != nil {
-		return nil, err
-	}
+	roleId := entitlement.Resource.Id.Resource
 
 	// get all current members of the role
 	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)

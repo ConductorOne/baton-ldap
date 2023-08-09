@@ -212,10 +212,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, nil
 	}
 
-	groupId, err := extractResourceId(entitlement.Id)
-	if err != nil {
-		return nil, err
-	}
+	groupId := entitlement.Resource.Id.Resource
 
 	// get all current members of the group
 	groupDN, memberEntries, err := g.findGroupMembers(ctx, groupId)
@@ -269,10 +266,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		)
 	}
 
-	groupId, err := extractResourceId(entitlement.Id)
-	if err != nil {
-		return nil, err
-	}
+	groupId := entitlement.Resource.Id.Resource
 
 	// get all current members of the group
 	groupDN, memberEntries, err := g.findGroupMembers(ctx, groupId)
