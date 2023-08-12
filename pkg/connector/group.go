@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -47,7 +46,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	if len(members) > 0 {
-		profile["group_members"] = strings.Join(members, ",")
+		profile["group_members"] = StringSliceToInterfaceSlice(members)
 	}
 
 	groupTraitOptions := []rs.GroupTraitOption{
@@ -55,14 +54,11 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	groupName := group.GetAttributeValue(attrGroupCommonName)
-	if groupName == "" {
-		return nil, fmt.Errorf("ldap-connector: failed to get group name")
-	}
 
 	resource, err := rs.NewGroupResource(
 		titleCaser.String(groupName),
 		resourceTypeGroup,
-		groupName,
+		group.DN,
 		groupTraitOptions,
 	)
 	if err != nil {
@@ -84,6 +80,7 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 		nil,
 		page,
 		uint32(ResourcesPageSize),
+		"",
 	)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list groups: %w", err)
@@ -134,29 +131,28 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	memberIdsString, ok := rs.GetProfileStringValue(groupTrait.Profile, "group_members")
+	memberDNStrings, ok := GetProfileStringArray(groupTrait.Profile, "group_members")
 	if !ok {
 		return nil, "", nil, nil
 	}
 
-	memberIds := strings.Split(memberIdsString, ",")
-
 	// create membership grants
 	var rv []*v2.Grant
-	for _, id := range memberIds {
+	for _, dn := range memberDNStrings {
 		memberEntry, _, err := g.client.LdapSearch(
 			ctx,
-			fmt.Sprintf("(%s=%s)", attrUserUID, id),
+			"",
 			nil,
 			"",
 			1,
+			dn,
 		)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with id %s: %w", id, err)
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
 		}
 
 		if len(memberEntry) == 0 {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with id %s", id)
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn %s", dn)
 		}
 
 		memberCopy := memberEntry
@@ -181,10 +177,11 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 func (g *groupResourceType) findGroupMembers(ctx context.Context, group string) (string, []string, error) {
 	groupEntry, _, err := g.client.LdapSearch(
 		ctx,
-		fmt.Sprintf("(%s=%s)", attrGroupCommonName, group),
+		"",
 		nil,
 		"",
 		1,
+		group,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("ldap-connector: failed to get group %s: %w", group, err)
@@ -222,21 +219,18 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 
 	// check if user is already a member of the group
 	if containsMember(memberEntries, principal.Id.Resource) {
-		l.Warn(
-			"baton-ldap: cannot add user who already is a member of the group",
-			zap.String("group", entitlement.Id),
-			zap.String("user", principal.Id.Resource),
-		)
-
-		return nil, fmt.Errorf("ldap-connector: cannot add user who already is a member of the group")
+		// user is already a member of the group, nothing to do.
+		return nil, nil
 	}
 
-	principalEntry, err := g.client.CreateMemberEntry(principal.Id.Resource, memberEntries[0])
+	// This checks to see if the user exists in LDAP.
+	// TODO: We could probably skip this step, since we already have the principal
+	_, err = g.client.CreateMemberEntry(ctx, principal.Id.Resource)
 	if err != nil {
 		return nil, err
 	}
 
-	updatedEntries := addMember(memberEntries, principalEntry)
+	updatedEntries := addMember(memberEntries, principal.Id.Resource)
 
 	// grant group membership to the principal
 	err = g.client.LdapModify(
@@ -276,13 +270,8 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 
 	// check if principal is a member of the group
 	if !containsMember(memberEntries, principal.Id.Resource) {
-		l.Warn(
-			"baton-ldap: cannot remove user from group they are not a member of",
-			zap.String("group", entitlement.Id),
-			zap.String("user", principal.Id.Resource),
-		)
-
-		return nil, fmt.Errorf("ldap-connector: cannot remove user from group they are not a member of")
+		// user is already not a member of the group, so nothing to do.
+		return nil, nil
 	}
 
 	// remove principal from members

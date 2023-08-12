@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -61,7 +60,7 @@ func (c *Client) getConnection(ctx context.Context, f func(client *ldapConn) err
 	return nil
 }
 
-func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []string, pageToken string, pageSize uint32) ([]*ldap.Entry, string, error) {
+func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []string, pageToken string, pageSize uint32, baseDNOverride string) ([]*ldap.Entry, string, error) {
 	l := ctxzap.Extract(ctx)
 
 	var ret []*ldap.Entry
@@ -84,10 +83,19 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 		if len(attrNames) == 0 {
 			attrNames = []string{"*"}
 		}
+		scope := ldap.ScopeBaseObject
+		if baseDNOverride == "" {
+			baseDNOverride = client.baseDN
+			scope = ldap.ScopeWholeSubtree
+		}
+
+		if filter == "" {
+			filter = "(objectClass=*)"
+		}
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
-			BaseDN:       client.baseDN,
-			Scope:        ldap.ScopeWholeSubtree,
+			BaseDN:       baseDNOverride,
+			Scope:        scope,
 			DerefAliases: ldap.DerefAlways,
 			Filter:       filter,
 			Attributes:   attrNames,
@@ -114,19 +122,23 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	return ret, nextPageToken, nil
 }
 
-func (c *Client) CreateMemberEntry(memberId string, sampleDN string) (string, error) {
-	sampleMemberDN, err := ldap.ParseDN(sampleDN)
+func (c *Client) CreateMemberEntry(ctx context.Context, memberId string) (string, error) {
+	memberEntry, _, err := c.LdapSearch(
+		ctx,
+		"",
+		nil,
+		"",
+		1,
+		memberId,
+	)
 	if err != nil {
-		return "", fmt.Errorf("baton-ldap: failed to parse member DN %s: %w", sampleDN, err)
+		return "", fmt.Errorf("ldap-connector: failed to get user with id %s: %w", memberId, err)
+	}
+	if len(memberEntry) == 0 {
+		return "", fmt.Errorf("ldap-connector: no user with id %s found", memberId)
 	}
 
-	var memberBaseDN []string
-	// compose memberBaseDN from sample RDNs
-	for _, rdn := range sampleMemberDN.RDNs[1:] {
-		memberBaseDN = append(memberBaseDN, rdn.String())
-	}
-
-	return fmt.Sprintf("uid=%s,%s", memberId, strings.Join(memberBaseDN, ",")), nil
+	return memberEntry[0].DN, nil
 }
 
 func (c *Client) LdapModify(ctx context.Context, dn string, attr string, newValues []string) error {
