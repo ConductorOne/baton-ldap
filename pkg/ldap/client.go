@@ -168,7 +168,7 @@ func TestConnection(domain string) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func getConnection(ctx context.Context, serverAddr string, password string) (*ldap.Conn, error) {
+func getConnection(ctx context.Context, serverAddr string, password string, userDN string) (*ldap.Conn, error) {
 	l := ctxzap.Extract(ctx)
 
 	conn, err := TestConnection(serverAddr)
@@ -177,7 +177,7 @@ func getConnection(ctx context.Context, serverAddr string, password string) (*ld
 		return nil, err
 	}
 
-	err = conn.Bind("cn=admin,dc=example,dc=org", password)
+	err = conn.Bind(userDN, password)
 	if err != nil {
 		l.Error("Failed to bind to LDAP server", zap.Error(err))
 		return nil, err
@@ -186,14 +186,14 @@ func getConnection(ctx context.Context, serverAddr string, password string) (*ld
 	return conn, nil
 }
 
-func NewClient(ctx context.Context, serverAddr string, baseDN string, password string) (*Client, error) {
-	_, err := getConnection(ctx, serverAddr, password)
+func NewClient(ctx context.Context, serverAddr string, baseDN string, password string, userDN string) (*Client, error) {
+	_, err := getConnection(ctx, serverAddr, password, userDN)
 	if err != nil {
 		return nil, err
 	}
 
 	constructor := func(context.Context) (*ldapConn, error) {
-		conn, err := getConnection(ctx, serverAddr, password)
+		conn, err := getConnection(ctx, serverAddr, password, userDN)
 		if err != nil {
 			return nil, err
 		}

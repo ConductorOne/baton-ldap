@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -56,19 +57,29 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 
 // Validates that the user has read access to all relevant tables (more information in the readme).
 func (l *LDAP) Validate(ctx context.Context) (annotations.Annotations, error) {
-	// TODO: implement validation of user binding
+	_, _, err := l.client.LdapSearch(
+		ctx,
+		"(objectClass=*)",
+		nil,
+		"",
+		1,
+		"",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to validate user credentials: %w", err)
+	}
 	return nil, nil
 }
 
 // New returns the LDAP connector.
-func New(ctx context.Context, domain string, baseDN string, password string) (*LDAP, error) {
+func New(ctx context.Context, domain string, baseDN string, password string, userDN string) (*LDAP, error) {
 	conn, err := ldap.TestConnection(domain)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	ldapClient, err := ldap.NewClient(ctx, domain, baseDN, password)
+	ldapClient, err := ldap.NewClient(ctx, domain, baseDN, password, userDN)
 	if err != nil {
 		return nil, err
 	}
