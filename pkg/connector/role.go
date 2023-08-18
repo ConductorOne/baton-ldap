@@ -46,7 +46,7 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	if len(members) > 0 {
-		profile["role_members"] = StringSliceToInterfaceSlice(members)
+		profile["role_members"] = stringSliceToInterfaceSlice(members)
 	}
 
 	roleTraitOptions := []rs.RoleTraitOption{
@@ -129,7 +129,7 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 		return nil, "", nil, err
 	}
 
-	memberDNStrings, ok := GetProfileStringArray(roleTrait.Profile, "role_members")
+	memberDNStrings, ok := getProfileStringArray(roleTrait.Profile, "role_members")
 	if !ok {
 		return nil, "", nil, nil
 	}

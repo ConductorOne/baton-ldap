@@ -82,7 +82,7 @@ func addMember(memberEntries []string, entry string) []string {
 	return append(memberEntries, entry)
 }
 
-func GetProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
+func getProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
 	var values []string
 	if profile == nil {
 		return nil, false
@@ -107,7 +107,7 @@ func GetProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) 
 	return values, true
 }
 
-func StringSliceToInterfaceSlice(s []string) []interface{} {
+func stringSliceToInterfaceSlice(s []string) []interface{} {
 	var i []interface{}
 	for _, v := range s {
 		i = append(i, v)

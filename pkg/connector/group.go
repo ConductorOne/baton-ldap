@@ -46,7 +46,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	if len(members) > 0 {
-		profile["group_members"] = StringSliceToInterfaceSlice(members)
+		profile["group_members"] = stringSliceToInterfaceSlice(members)
 	}
 
 	groupTraitOptions := []rs.GroupTraitOption{
@@ -131,7 +131,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	memberDNStrings, ok := GetProfileStringArray(groupTrait.Profile, "group_members")
+	memberDNStrings, ok := getProfileStringArray(groupTrait.Profile, "group_members")
 	if !ok {
 		return nil, "", nil, nil
 	}
