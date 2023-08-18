@@ -40,6 +40,63 @@ BATON_PASSWORD=admin_pass BATON_BASE_DN=base_dn BATON_USER_DN=user_dn BATON_DOMA
 baton resources
 ```
 
+## how to test 
+you can use this docker.yaml to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server. 
+
+```
+version: '3.7'
+services:
+  openldap:
+    image: osixia/openldap:latest
+    container_name: openldap
+    hostname: openldap
+    ports: 
+      - "389:389"
+      - "636:636"
+    volumes:
+      - ./data/certificates:/container/service/slapd/assets/certs
+      - ./data/slapd/database:/var/lib/ldap
+      - ./data/slapd/config:/etc/ldap/slapd.d
+    environment: 
+      - LDAP_ORGANISATION=example
+      - LDAP_DOMAIN=example.org
+      - LDAP_ADMIN_USERNAME=admin
+      - LDAP_ADMIN_PASSWORD=admin
+      - LDAP_CONFIG_PASSWORD=config_pass
+      - "LDAP_BASE_DN=dc=example,dc=org"
+    networks:
+      - openldap
+  
+  phpldapadmin:
+    image: osixia/phpldapadmin:latest
+    container_name: phpldapadmin
+    hostname: phpldapadmin
+    ports: 
+      - "80:80"
+    environment: 
+      - PHPLDAPADMIN_LDAP_HOSTS=openldap
+      - PHPLDAPADMIN_HTTPS=false
+    depends_on:
+      - openldap
+    networks:
+      - openldap
+
+networks:
+  openldap:
+    driver: bridge
+```
+
+Run `docker-compose up -d` to launch the containers.
+You can then access the PHP LDAP admin server at http://localhost:80 and login with the admin credentials you provided in the docker-compose file.
+After you login you can create new resources to be synced by baton. 
+
+After creating new resources on the LDAP server, use the `baton-ldap` cli to sync the data from the LDAP server with the example command below.
+`baton-ldap --base-dn dc=example,dc=org --user-dn cn=admin,dc=example,dc=org --password admin --domain localhost`
+
+After successfully syncing data, use the baton CLI to list the resources and see the synced data.
+`baton resources`
+`baton stats`
+
 # Data Model
 
 `baton-ldap` will fetch information about the following LDAP resources:
