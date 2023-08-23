@@ -68,14 +68,15 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		rs.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
 	}
 
+	// if no display name, use the user id
 	if displayName == "" {
-		return nil, fmt.Errorf("ldap-connector: failed to get display name for user %s", userId)
+		displayName = userId
 	}
 
 	resource, err := rs.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		userId,
+		user.DN,
 		userTraitOptions,
 	)
 	if err != nil {
@@ -97,6 +98,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 		nil,
 		page,
 		uint32(ResourcesPageSize),
+		"",
 	)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list users: %w", err)

@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"fmt"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -10,6 +9,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var ResourcesPageSize = 50
@@ -45,25 +45,6 @@ func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, strin
 	return b, b.PageToken(), nil
 }
 
-// Parses the uid from a member entry
-// Format of each member is "uid=jdoe,ou=users,dc=example,dc=org".
-func parseUID(memberDN string) (string, error) {
-	dn, err := ldap.ParseDN(memberDN)
-	if err != nil {
-		return "", err
-	}
-
-	for _, rdn := range dn.RDNs {
-		for _, attr := range rdn.Attributes {
-			if attr.Type == "uid" {
-				return attr.Value, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("ldap-connector: failed to parse uid from member DN %s", memberDN)
-}
-
 // Parses the member ids of a role or a group.
 func parseMembers(entry *ldap.Entry, targetAttr string) ([]string, error) {
 	membersPayload := entry.GetAttributeValues(targetAttr)
@@ -72,28 +53,12 @@ func parseMembers(entry *ldap.Entry, targetAttr string) ([]string, error) {
 		return nil, nil
 	}
 
-	var members []string
-
-	for _, memberDN := range membersPayload {
-		uid, err := parseUID(memberDN)
-		if err != nil {
-			return nil, err
-		}
-
-		members = append(members, uid)
-	}
-
-	return members, nil
+	return membersPayload, nil
 }
 
-func containsMember(memberEntries []string, member string) bool {
+func containsMember(memberEntries []string, memberId string) bool {
 	for _, m := range memberEntries {
-		id, err := parseUID(m)
-		if err != nil {
-			continue
-		}
-
-		if id == member {
+		if m == memberId {
 			return true
 		}
 	}
@@ -101,16 +66,11 @@ func containsMember(memberEntries []string, member string) bool {
 	return false
 }
 
-func removeMember(memberEntries []string, member string) ([]string, error) {
+func removeMember(memberEntries []string, memberId string) ([]string, error) {
 	updatedEntries := make([]string, 0, len(memberEntries)-1)
 
 	for _, entry := range memberEntries {
-		id, err := parseUID(entry)
-		if err != nil {
-			return nil, err
-		}
-
-		if id != member {
+		if entry != memberId {
 			updatedEntries = append(updatedEntries, entry)
 		}
 	}
@@ -120,4 +80,37 @@ func removeMember(memberEntries []string, member string) ([]string, error) {
 
 func addMember(memberEntries []string, entry string) []string {
 	return append(memberEntries, entry)
+}
+
+func getProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
+	var values []string
+	if profile == nil {
+		return nil, false
+	}
+
+	v, ok := profile.Fields[k]
+	if !ok {
+		return nil, false
+	}
+
+	s, ok := v.Kind.(*structpb.Value_ListValue)
+	if !ok {
+		return nil, false
+	}
+
+	for _, v := range s.ListValue.Values {
+		if strVal := v.GetStringValue(); strVal != "" {
+			values = append(values, strVal)
+		}
+	}
+
+	return values, true
+}
+
+func stringSliceToInterfaceSlice(s []string) []interface{} {
+	var i []interface{}
+	for _, v := range s {
+		i = append(i, v)
+	}
+	return i
 }

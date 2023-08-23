@@ -16,6 +16,7 @@ type config struct {
 	Domain   string `mapstructure:"domain"`
 	BaseDN   string `mapstructure:"base-dn"`
 	Password string `mapstructure:"password"`
+	UserDN   string `mapstructure:"user-dn"`
 }
 
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
@@ -25,6 +26,11 @@ func validateConfig(ctx context.Context, cfg *config) error {
 	}
 
 	_, err := ldap.ParseDN(cfg.BaseDN)
+	if err != nil {
+		return err
+	}
+
+	_, err = ldap.ParseDN(cfg.UserDN)
 	if err != nil {
 		return err
 	}
@@ -41,4 +47,5 @@ func cmdFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("domain", "", "The fully-qualified LDAP domain to connect with. Example: \"baton.example.com\" ($BATON_DOMAIN)")
 	cmd.PersistentFlags().String("base-dn", "", "The base DN to search from. Example: \"DC=baton,DC=example,DC=com\" ($BATON_BASE_DN)")
 	cmd.PersistentFlags().String("password", "", "The password to bind to the LDAP server. ($BATON_PASSWORD)")
+	cmd.PersistentFlags().String("user-dn", "", "The user DN to bind to the LDAP server. ($BATON_USER_DN)")
 }

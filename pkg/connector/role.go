@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -47,7 +46,7 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	if len(members) > 0 {
-		profile["role_members"] = strings.Join(members, ",")
+		profile["role_members"] = stringSliceToInterfaceSlice(members)
 	}
 
 	roleTraitOptions := []rs.RoleTraitOption{
@@ -55,20 +54,15 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	roleName := role.GetAttributeValue(attrRoleCommonName)
-	if roleName == "" {
-		return nil, fmt.Errorf("ldap-connector: failed to get role name")
-	}
-
 	resource, err := rs.NewRoleResource(
 		titleCaser.String(roleName),
 		resourceTypeRole,
-		roleName,
+		role.DN,
 		roleTraitOptions,
 	)
 	if err != nil {
 		return nil, err
 	}
-
 	return resource, nil
 }
 
@@ -84,6 +78,7 @@ func (r *roleResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 		nil,
 		page,
 		uint32(ResourcesPageSize),
+		"",
 	)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list roles: %w", err)
@@ -134,29 +129,28 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 		return nil, "", nil, err
 	}
 
-	memberIdsString, ok := rs.GetProfileStringValue(roleTrait.Profile, "role_members")
+	memberDNStrings, ok := getProfileStringArray(roleTrait.Profile, "role_members")
 	if !ok {
 		return nil, "", nil, nil
 	}
 
-	memberIds := strings.Split(memberIdsString, ",")
-
 	// create membership grants
 	var rv []*v2.Grant
-	for _, id := range memberIds {
+	for _, dn := range memberDNStrings {
 		memberEntry, _, err := r.client.LdapSearch(
 			ctx,
-			fmt.Sprintf("(%s=%s)", attrUserUID, id),
+			"",
 			nil,
 			"",
 			1,
+			dn,
 		)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with id %s: %w", id, err)
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
 		}
 
 		if len(memberEntry) == 0 {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with id %s", id)
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn %s", dn)
 		}
 
 		memberCopy := memberEntry
@@ -181,10 +175,11 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 func (r *roleResourceType) findRoleMembers(ctx context.Context, role string) (string, []string, error) {
 	roleEntry, _, err := r.client.LdapSearch(
 		ctx,
-		fmt.Sprintf("(%s=%s)", attrRoleCommonName, role),
+		"",
 		nil,
 		"",
 		1,
+		role,
 	)
 	if err != nil {
 		return "", nil, fmt.Errorf("ldap-connector: failed to get role %s: %w", role, err)
@@ -222,21 +217,18 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 
 	// check if principal is a member of the role
 	if containsMember(memberEntries, principal.Id.Resource) {
-		l.Warn(
-			"baton-ldap: cannot add user who already is a member of the role",
-			zap.String("role", entitlement.Id),
-			zap.String("user", principal.Id.Resource),
-		)
-
-		return nil, fmt.Errorf("ldap-connector: cannot add user who already is a member of the role")
+		// the user is already a member of the role, so do nothing.
+		return nil, nil
 	}
 
-	principalEntry, err := r.client.CreateMemberEntry(principal.Id.Resource, memberEntries[0])
+	// This checks to see if the user exists in LDAP.
+	// TODO: We could probably skip this step, since we already have the principal
+	_, err = r.client.CreateMemberEntry(ctx, principal.Id.Resource)
 	if err != nil {
 		return nil, err
 	}
 
-	updatedEntries := addMember(memberEntries, principalEntry)
+	updatedEntries := addMember(memberEntries, principal.Id.Resource)
 
 	// grant role memberships to the principal
 	err = r.client.LdapModify(
@@ -276,13 +268,8 @@ func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 
 	// check if principal is a member of the role
 	if !containsMember(memberEntries, principal.Id.Resource) {
-		l.Warn(
-			"baton-ldap: cannot remove user from role they are not a member of",
-			zap.String("role", entitlement.Id),
-			zap.String("user", principal.Id.Resource),
-		)
-
-		return nil, fmt.Errorf("ldap-connector: cannot remove user from role they are not a member of")
+		// the user is already not a member of the role, so do nothing.
+		return nil, nil
 	}
 
 	// remove principal from members
