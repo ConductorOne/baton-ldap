@@ -11,8 +11,7 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
+	ldap3 "github.com/go-ldap/ldap/v3"
 )
 
 const (
@@ -172,70 +171,28 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 	return rv, "", nil, nil
 }
 
-func (r *roleResourceType) findRoleMembers(ctx context.Context, role string) (string, []string, error) {
-	roleEntry, _, err := r.client.LdapSearch(
-		ctx,
-		"",
-		nil,
-		"",
-		1,
-		role,
-	)
-	if err != nil {
-		return "", nil, fmt.Errorf("ldap-connector: failed to get role %s: %w", role, err)
-	}
-
-	if len(roleEntry) == 0 {
-		return "", nil, fmt.Errorf("ldap-connector: failed to get role %s", role)
-	}
-
-	membersPayload := roleEntry[0].GetAttributeValues(attrRoleMember)
-
-	return roleEntry[0].DN, membersPayload, nil
-}
-
 func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-ldap: only users can have role membership granted",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-
-		return nil, nil
+		return nil, fmt.Errorf("baton-ldap: only users can have role membership granted")
 	}
 
-	roleId := entitlement.Resource.Id.Resource
-
-	// get all current members of the role
-	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)
-	if err != nil {
-		return nil, err
-	}
-
-	// check if principal is a member of the role
-	if containsMember(memberEntries, principal.Id.Resource) {
-		// the user is already a member of the role, so do nothing.
-		return nil, nil
-	}
+	roleDN := entitlement.Resource.Id.Resource
 
 	// This checks to see if the user exists in LDAP.
 	// TODO: We could probably skip this step, since we already have the principal
-	_, err = r.client.CreateMemberEntry(ctx, principal.Id.Resource)
+	_, err := r.client.CreateMemberEntry(ctx, principal.Id.Resource)
 	if err != nil {
 		return nil, err
 	}
 
-	updatedEntries := addMember(memberEntries, principal.Id.Resource)
+	principalDNArr := []string{principal.Id.Resource}
+	modifyRequest := ldap3.NewModifyRequest(roleDN, nil)
+	modifyRequest.Add(attrRoleMember, principalDNArr)
 
 	// grant role memberships to the principal
 	err = r.client.LdapModify(
 		ctx,
-		roleDN,
-		attrRoleMember,
-		updatedEntries,
+		modifyRequest,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to grant role membership to user: %w", err)
@@ -245,45 +202,23 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 }
 
 func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	entitlement := grant.Entitlement
 	principal := grant.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-ldap: only users can have role membership revoked",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
+		return nil, fmt.Errorf("baton-ldap: only users can have role membership revoked")
 	}
 
-	roleId := entitlement.Resource.Id.Resource
+	roleDN := entitlement.Resource.Id.Resource
 
-	// get all current members of the role
-	roleDN, memberEntries, err := r.findRoleMembers(ctx, roleId)
-	if err != nil {
-		return nil, err
-	}
-
-	// check if principal is a member of the role
-	if !containsMember(memberEntries, principal.Id.Resource) {
-		// the user is already not a member of the role, so do nothing.
-		return nil, nil
-	}
-
-	// remove principal from members
-	updatedEntries, err := removeMember(memberEntries, principal.Id.Resource)
-	if err != nil {
-		return nil, err
-	}
+	principalDNArr := []string{principal.Id.Resource}
+	modifyRequest := ldap3.NewModifyRequest(roleDN, nil)
+	modifyRequest.Delete(attrRoleMember, principalDNArr)
 
 	// revoke role memberships from the principal
-	err = r.client.LdapModify(
+	err := r.client.LdapModify(
 		ctx,
-		roleDN,
-		attrRoleMember,
-		updatedEntries,
+		modifyRequest,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to revoke role membership from user: %w", err)

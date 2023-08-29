@@ -56,32 +56,6 @@ func parseMembers(entry *ldap.Entry, targetAttr string) ([]string, error) {
 	return membersPayload, nil
 }
 
-func containsMember(memberEntries []string, memberId string) bool {
-	for _, m := range memberEntries {
-		if m == memberId {
-			return true
-		}
-	}
-
-	return false
-}
-
-func removeMember(memberEntries []string, memberId string) ([]string, error) {
-	updatedEntries := make([]string, 0, len(memberEntries)-1)
-
-	for _, entry := range memberEntries {
-		if entry != memberId {
-			updatedEntries = append(updatedEntries, entry)
-		}
-	}
-
-	return updatedEntries, nil
-}
-
-func addMember(memberEntries []string, entry string) []string {
-	return append(memberEntries, entry)
-}
-
 func getProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
 	var values []string
 	if profile == nil {

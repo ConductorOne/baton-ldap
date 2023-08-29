@@ -30,7 +30,7 @@ type Client struct {
 
 type Entry = ldap.Entry
 
-func (c *Client) getConnection(ctx context.Context, f func(client *ldapConn) error) error {
+func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client *ldapConn) error) error {
 	l := ctxzap.Extract(ctx)
 
 	connectAttempts := 0
@@ -49,6 +49,11 @@ func (c *Client) getConnection(ctx context.Context, f func(client *ldapConn) err
 				connectAttempts++
 				continue
 			}
+			// If we are revoking a user's membership from a resource, and the user is not a member of the resource, we don't want to return an error.
+			// If we are adding a user to a resource, and the user is already a member of the resource, we also don't want to return an error.
+			if (ldap.IsErrorWithCode(err, 68) || ldap.IsErrorWithCode(err, 53)) && isModify {
+				return nil
+			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
 			cp.Release()
 			return err
@@ -66,7 +71,7 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	var ret []*ldap.Entry
 	var nextPageToken string
 
-	err := c.getConnection(ctx, func(client *ldapConn) error {
+	err := c.getConnection(ctx, false, func(client *ldapConn) error {
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
 		}
@@ -141,18 +146,14 @@ func (c *Client) CreateMemberEntry(ctx context.Context, memberId string) (string
 	return memberEntry[0].DN, nil
 }
 
-func (c *Client) LdapModify(ctx context.Context, dn string, attr string, newValues []string) error {
+func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
 	l := ctxzap.Extract(ctx)
 
-	err := c.getConnection(ctx, func(client *ldapConn) error {
-		modifyRequest := ldap.NewModifyRequest(dn, nil)
-
-		modifyRequest.Replace(attr, newValues)
-
+	err := c.getConnection(ctx, true, func(client *ldapConn) error {
 		return client.conn.Modify(modifyRequest)
 	})
 	if err != nil {
-		l.Error("baton-ldap: client failed to get connection", zap.Error(err))
+		l.Error("baton-ldap: client failed to modify record", zap.Error(err))
 		return err
 	}
 
