@@ -11,8 +11,7 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
+	ldap3 "github.com/go-ldap/ldap/v3"
 )
 
 const (
@@ -174,70 +173,28 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	return rv, "", nil, nil
 }
 
-func (g *groupResourceType) findGroupMembers(ctx context.Context, group string) (string, []string, error) {
-	groupEntry, _, err := g.client.LdapSearch(
-		ctx,
-		"",
-		nil,
-		"",
-		1,
-		group,
-	)
-	if err != nil {
-		return "", nil, fmt.Errorf("ldap-connector: failed to get group %s: %w", group, err)
-	}
-
-	if len(groupEntry) == 0 {
-		return "", nil, fmt.Errorf("ldap-connector: failed to get group %s", group)
-	}
-
-	membersPayload := groupEntry[0].GetAttributeValues(attrGroupMember)
-
-	return groupEntry[0].DN, membersPayload, nil
-}
-
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-ldap: only users can have group membership granted",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-
-		return nil, nil
+		return nil, fmt.Errorf("baton-ldap: only users can have group membership granted")
 	}
 
-	groupId := entitlement.Resource.Id.Resource
-
-	// get all current members of the group
-	groupDN, memberEntries, err := g.findGroupMembers(ctx, groupId)
-	if err != nil {
-		return nil, err
-	}
-
-	// check if user is already a member of the group
-	if containsMember(memberEntries, principal.Id.Resource) {
-		// user is already a member of the group, nothing to do.
-		return nil, nil
-	}
+	groupDN := entitlement.Resource.Id.Resource
 
 	// This checks to see if the user exists in LDAP.
 	// TODO: We could probably skip this step, since we already have the principal
-	_, err = g.client.CreateMemberEntry(ctx, principal.Id.Resource)
+	_, err := g.client.CreateMemberEntry(ctx, principal.Id.Resource)
 	if err != nil {
 		return nil, err
 	}
 
-	updatedEntries := addMember(memberEntries, principal.Id.Resource)
+	principalDNArr := []string{principal.Id.Resource}
+	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
+	modifyRequest.Add(attrGroupMember, principalDNArr)
 
 	// grant group membership to the principal
 	err = g.client.LdapModify(
 		ctx,
-		groupDN,
-		attrGroupMember,
-		updatedEntries,
+		modifyRequest,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to grant group membership to user: %w", err)
@@ -247,45 +204,23 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 }
 
 func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	entitlement := grant.Entitlement
 	principal := grant.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-ldap: only users can have group membership revoked",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
+		return nil, fmt.Errorf("baton-ldap: only users can have group membership revoked")
 	}
 
-	groupId := entitlement.Resource.Id.Resource
+	groupDN := entitlement.Resource.Id.Resource
 
-	// get all current members of the group
-	groupDN, memberEntries, err := g.findGroupMembers(ctx, groupId)
-	if err != nil {
-		return nil, err
-	}
-
-	// check if principal is a member of the group
-	if !containsMember(memberEntries, principal.Id.Resource) {
-		// user is already not a member of the group, so nothing to do.
-		return nil, nil
-	}
-
-	// remove principal from members
-	updatedEntries, err := removeMember(memberEntries, principal.Id.Resource)
-	if err != nil {
-		return nil, err
-	}
+	principalDNArr := []string{principal.Id.Resource}
+	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
+	modifyRequest.Delete(attrGroupMember, principalDNArr)
 
 	// revoke group membership from the principal
-	err = g.client.LdapModify(
+	err := g.client.LdapModify(
 		ctx,
-		groupDN,
-		attrGroupMember,
-		updatedEntries,
+		modifyRequest,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership from user: %w", err)
