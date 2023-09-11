@@ -65,7 +65,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
 		rs.WithUserProfile(profile),
-		rs.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
+		rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
 	}
 
 	// if no display name, use the user id
