@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -22,6 +23,9 @@ const (
 	attrLastName        = "sn"
 	attrUserMail        = "mail"
 	attrUserDisplayName = "displayName"
+
+	// Microsoft Active Directory
+	attrUserAccountControl = "userAccountControl"
 )
 
 type userResourceType struct {
@@ -50,6 +54,28 @@ func parseUserNames(user *ldap.Entry) (string, string, string) {
 	return firstName, lastName, displayName
 }
 
+func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
+	userStatus := v2.UserTrait_Status_STATUS_UNSPECIFIED
+
+	// Currently only UserAccountControlFlag from Microsoft is supported
+	userAccountControlFlag := user.GetAttributeValue(attrUserAccountControl)
+	if userAccountControlFlag != "" {
+		userAccountControlFlag, err := strconv.ParseInt(userAccountControlFlag, 10, 64)
+		if err != nil {
+			return userStatus, err
+		}
+		// Check if the ACCOUNTDISABLE flag (bit 2) is set
+		// https://learn.microsoft.com/en-us/troubleshoot/windows-server/identity/useraccountcontrol-manipulate-account-properties
+		if (userAccountControlFlag & 2) == 0 {
+			userStatus = v2.UserTrait_Status_STATUS_ENABLED
+		} else {
+			userStatus = v2.UserTrait_Status_STATUS_DISABLED
+		}
+		return userStatus, nil
+	}
+	return userStatus, nil
+}
+
 // Create a new connector resource for an LDAP User.
 func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	firstName, lastName, displayName := parseUserNames(user)
@@ -62,10 +88,20 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		"path":       user.DN,
 	}
 
+	userStatus, err := parseUserStatus(user)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the user status is not set, default to enabled
+	if userStatus == v2.UserTrait_Status_STATUS_UNSPECIFIED {
+		userStatus = v2.UserTrait_Status_STATUS_ENABLED
+	}
+
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
 		rs.WithUserProfile(profile),
-		rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
+		rs.WithStatus(userStatus),
 	}
 
 	// if no display name, use the user id
