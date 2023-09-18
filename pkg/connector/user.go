@@ -24,7 +24,7 @@ const (
 	attrUserMail        = "mail"
 	attrUserDisplayName = "displayName"
 
-	// Microsoft active directory specific attribute
+	// Microsoft active directory specific attribute.
 	attrUserAccountControl = "userAccountControl"
 )
 
