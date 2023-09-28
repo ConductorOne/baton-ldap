@@ -36,11 +36,7 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for an LDAP Group.
 func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error) {
-	members, err := parseMembers(group, []string{attrGroupMember, attrGroupMemberPosix})
-	if err != nil {
-		return nil, err
-	}
-
+	members := parseValues(group, []string{attrGroupMember, attrGroupMemberPosix})
 	profile := map[string]interface{}{
 		"group_description": group.GetAttributeValue(attrGroupDescription),
 	}

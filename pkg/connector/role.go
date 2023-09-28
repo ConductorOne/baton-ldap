@@ -35,11 +35,7 @@ func (r *roleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for an LDAP Role.
 func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
-	members, err := parseMembers(role, attrRoleMember)
-	if err != nil {
-		return nil, err
-	}
-
+	members := parseValues(role, []string{attrRoleMember})
 	profile := map[string]interface{}{
 		"role_description": role.GetAttributeValue(attrRoleDescription),
 	}
