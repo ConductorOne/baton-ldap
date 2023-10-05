@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	groupFilter = "(objectClass=groupOfUniqueNames)"
+	groupFilter = "(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
 
 	attrGroupCommonName  = "cn"
+	attrGroupIdPosix     = "gidNumber"
 	attrGroupMember      = "uniqueMember"
+	attrGroupMemberPosix = "memberUid"
 	attrGroupDescription = "description"
 
 	groupMemberEntitlement = "member"
@@ -35,13 +37,14 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for an LDAP Group.
 func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error) {
-	members, err := parseMembers(group, attrGroupMember)
-	if err != nil {
-		return nil, err
-	}
-
+	groupId := parseValue(group, []string{attrGroupIdPosix})
+	members := parseValues(group, []string{attrGroupMember, attrGroupMemberPosix})
 	profile := map[string]interface{}{
 		"group_description": group.GetAttributeValue(attrGroupDescription),
+	}
+
+	if groupId != "" {
+		profile["group_id"] = groupId
 	}
 
 	if len(members) > 0 {

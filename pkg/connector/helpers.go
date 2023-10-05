@@ -45,15 +45,32 @@ func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, strin
 	return b, b.PageToken(), nil
 }
 
-// Parses the member ids of a role or a group.
-func parseMembers(entry *ldap.Entry, targetAttr string) ([]string, error) {
-	membersPayload := entry.GetAttributeValues(targetAttr)
+// Parses the values of targetted attributes from an LDAP entry.
+func parseValues(entry *ldap.Entry, targetAttrs []string) []string {
+	var rv []string
 
-	if len(membersPayload) == 0 {
-		return nil, nil
+	for _, targetAttr := range targetAttrs {
+		payload := entry.GetAttributeValues(targetAttr)
+
+		if len(payload) > 0 {
+			rv = append(rv, payload...)
+			break
+		}
 	}
 
-	return membersPayload, nil
+	return rv
+}
+
+func parseValue(entry *ldap.Entry, targetAttrs []string) string {
+	for _, targetAttr := range targetAttrs {
+		payload := entry.GetAttributeValue(targetAttr)
+
+		if payload != "" {
+			return payload
+		}
+	}
+
+	return ""
 }
 
 func getProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
