@@ -3,13 +3,14 @@ module github.com/conductorone/baton-ldap
 go 1.20
 
 require (
-	github.com/conductorone/baton-sdk v0.1.1
+	github.com/conductorone/baton-sdk v0.1.6
 	github.com/go-ldap/ldap/v3 v3.4.5
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.1
 	github.com/spf13/cobra v1.7.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/text v0.11.0
+	google.golang.org/protobuf v1.31.0
 )
 
 require (
@@ -80,7 +81,6 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230724170836-66ad5b6ff146 // indirect
 	google.golang.org/grpc v1.56.2 // indirect
-	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
