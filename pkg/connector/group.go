@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	groupFilter = "(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
+	groupFilter       = "(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
+	groupMemberFilter = "(&(objectClass=posixAccount)(uid=%s))"
 
 	attrGroupCommonName  = "cn"
 	attrGroupIdPosix     = "gidNumber"
@@ -44,7 +45,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	if groupId != "" {
-		profile["group_id"] = groupId
+		profile["gid"] = groupId
 	}
 
 	if len(members) > 0 {
@@ -141,20 +142,37 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	// create membership grants
 	var rv []*v2.Grant
 	for _, dn := range memberDNStrings {
-		memberEntry, _, err := g.client.LdapSearch(
-			ctx,
-			"",
-			nil,
-			"",
-			1,
-			dn,
-		)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
+		var memberEntry []*ldap.Entry
+
+		if parsedDN, err := ldap3.ParseDN(dn); err == nil {
+			memberEntry, _, err = g.client.LdapSearch(
+				ctx,
+				"",
+				nil,
+				"",
+				1,
+				parsedDN.String(),
+			)
+			if err != nil {
+				return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
+			}
+		} else {
+			// Group member doesn't look like it is a DN, search for it as a UID
+			memberEntry, _, err = g.client.LdapSearch(
+				ctx,
+				fmt.Sprintf(groupMemberFilter, dn),
+				nil,
+				"",
+				1,
+				"",
+			)
+			if err != nil {
+				return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with uid %s: %w", dn, err)
+			}
 		}
 
 		if len(memberEntry) == 0 {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn %s", dn)
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn or UID %s", dn)
 		}
 
 		memberCopy := memberEntry
