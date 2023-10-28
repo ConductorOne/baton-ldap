@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -25,6 +26,7 @@ const (
 	attrGroupDescription = "description"
 
 	groupMemberEntitlement = "member"
+	maxGroupGrants         = 100
 )
 
 type groupResourceType struct {
@@ -128,6 +130,26 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 	return rv, "", nil, nil
 }
 
+func paginateGroupMemberSlice(members []string, token *pagination.Token) ([]string, string) {
+	var current int64
+	if token.Token != "" {
+		current, _ = strconv.ParseInt(token.Token, 10, 64)
+	}
+
+	maxIdx := current + maxGroupGrants
+	if maxIdx > int64(len(members)) {
+		maxIdx = int64(len(members))
+	}
+
+	var nextPageToken string
+	ret := members[current:maxIdx]
+	if len(ret) == maxGroupGrants {
+		nextPageToken = strconv.FormatInt(current+int64(maxGroupGrants), 10)
+	}
+
+	return ret, nextPageToken
+}
+
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
@@ -139,9 +161,11 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, nil
 	}
 
+	results, nextPageToken := paginateGroupMemberSlice(memberDNStrings, token)
+
 	// create membership grants
 	var rv []*v2.Grant
-	for _, dn := range memberDNStrings {
+	for _, dn := range results {
 		var memberEntry []*ldap.Entry
 
 		if parsedDN, err := ldap3.ParseDN(dn); err == nil {
@@ -175,23 +199,23 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn or UID %s", dn)
 		}
 
-		memberCopy := memberEntry
-		ur, err := userResource(ctx, memberCopy[0])
-		if err != nil {
-			return nil, "", nil, err
-		}
-
-		rv = append(
-			rv,
-			grant.NewGrant(
-				resource,
+		for _, e := range memberEntry {
+			g := grant.NewGrant(
+				&v2.Resource{
+					Id: resource.Id,
+				},
 				groupMemberEntitlement,
-				ur.Id,
-			),
-		)
+				&v2.ResourceId{
+					ResourceType: resourceTypeUser.Id,
+					Resource:     e.DN,
+				},
+			)
+
+			rv = append(rv, g)
+		}
 	}
 
-	return rv, "", nil, nil
+	return rv, nextPageToken, nil, nil
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
