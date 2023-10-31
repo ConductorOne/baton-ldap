@@ -13,10 +13,12 @@ import (
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	ldap3 "github.com/go-ldap/ldap/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
 	groupFilter       = "(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
+	groupIdFilter     = "(&(gidNumber=%s)(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup)))"
 	groupMemberFilter = "(&(objectClass=posixAccount)(uid=%s))"
 
 	attrGroupCommonName  = "cn"
@@ -41,17 +43,13 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 // Create a new connector resource for an LDAP Group.
 func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error) {
 	groupId := parseValue(group, []string{attrGroupIdPosix})
-	members := parseValues(group, []string{attrGroupMember, attrGroupMemberPosix})
+	// Don't save members in profile since that could be a ton of data, wasting storage and hitting GRPC limits
 	profile := map[string]interface{}{
 		"group_description": group.GetAttributeValue(attrGroupDescription),
 	}
 
 	if groupId != "" {
 		profile["gid"] = groupId
-	}
-
-	if len(members) > 0 {
-		profile["group_members"] = stringSliceToInterfaceSlice(members)
 	}
 
 	groupTraitOptions := []rs.GroupTraitOption{
@@ -155,20 +153,57 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	memberDNStrings, ok := getProfileStringArray(groupTrait.Profile, "group_members")
-	if !ok {
-		return nil, "", nil, nil
+	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	if err != nil {
+		return nil, "", nil, err
 	}
 
-	results, nextPageToken := paginateGroupMemberSlice(memberDNStrings, token)
+	// TODO: fetch by cn instead of gid?
+	v, ok := groupTrait.Profile.Fields["gid"]
+	if !ok {
+		return nil, "", nil, fmt.Errorf("ldap-connector: no group id")
+	}
+	s, ok := v.Kind.(*structpb.Value_StringValue)
+	if !ok {
+		return nil, "", nil, fmt.Errorf("ldap-connector: group id isn't a string")
+	}
+	groupId := s.StringValue
+
+	query := fmt.Sprintf(groupIdFilter, groupId)
+	ldapGroup, nextPage, err := g.client.LdapSearch(
+		ctx,
+		query,
+		nil,
+		page,
+		uint32(ResourcesPageSize),
+		"",
+	)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list group members: %w", err)
+	}
+	if len(ldapGroup) == 0 {
+		return nil, "", nil, fmt.Errorf("ldap-connector: no group found")
+	}
+	if len(ldapGroup) > 1 {
+		return nil, "", nil, fmt.Errorf("ldap-connector: too many groups found")
+	}
+
+	pageToken, err := bag.NextToken(nextPage)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	memberIds := parseValues(ldapGroup[0], []string{attrGroupMember, attrGroupMemberPosix})
+	if len(memberIds) == 0 {
+		return nil, "", nil, fmt.Errorf("ldap-connector: no members found")
+	}
 
 	// create membership grants
 	var rv []*v2.Grant
-	for _, dn := range results {
+	for _, memberId := range memberIds {
 		var memberEntry []*ldap.Entry
 
-		if parsedDN, err := ldap3.ParseDN(dn); err == nil {
+		if parsedDN, err := ldap3.ParseDN(memberId); err == nil {
 			memberEntry, _, err = g.client.LdapSearch(
 				ctx,
 				"",
@@ -178,33 +213,35 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 				parsedDN.String(),
 			)
 			if err != nil {
-				return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
+				return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", memberId, err)
 			}
 		} else {
 			// Group member doesn't look like it is a DN, search for it as a UID
 			memberEntry, _, err = g.client.LdapSearch(
 				ctx,
-				fmt.Sprintf(groupMemberFilter, dn),
+				fmt.Sprintf(groupMemberFilter, memberId),
 				nil,
 				"",
 				1,
 				"",
 			)
 			if err != nil {
-				return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with uid %s: %w", dn, err)
+				return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to get user with uid %s: %w", memberId, err)
 			}
 		}
 
 		if len(memberEntry) == 0 {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn or UID %s", dn)
+			return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to find user with dn or UID %s", memberId)
 		}
 
 		for _, e := range memberEntry {
 			g := grant.NewGrant(
+				// remove group profile from grant so we're not saving all group memberships in every grant
 				&v2.Resource{
 					Id: resource.Id,
 				},
 				groupMemberEntitlement,
+				// remove user profile from grant so we're not saving repetitive user info in every grant
 				&v2.ResourceId{
 					ResourceType: resourceTypeUser.Id,
 					Resource:     e.DN,
@@ -215,7 +252,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		}
 	}
 
-	return rv, nextPageToken, nil, nil
+	return rv, pageToken, nil, nil
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

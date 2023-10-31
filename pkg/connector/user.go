@@ -151,7 +151,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 
 		ur, err := userResource(ctx, userEntryCopy)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, pageToken, nil, err
 		}
 
 		rv = append(rv, ur)
