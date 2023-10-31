@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -28,7 +27,6 @@ const (
 	attrGroupDescription = "description"
 
 	groupMemberEntitlement = "member"
-	maxGroupGrants         = 100
 )
 
 type groupResourceType struct {
@@ -126,26 +124,6 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 	))
 
 	return rv, "", nil, nil
-}
-
-func paginateGroupMemberSlice(members []string, token *pagination.Token) ([]string, string) {
-	var current int64
-	if token.Token != "" {
-		current, _ = strconv.ParseInt(token.Token, 10, 64)
-	}
-
-	maxIdx := current + maxGroupGrants
-	if maxIdx > int64(len(members)) {
-		maxIdx = int64(len(members))
-	}
-
-	var nextPageToken string
-	ret := members[current:maxIdx]
-	if len(ret) == maxGroupGrants {
-		nextPageToken = strconv.FormatInt(current+int64(maxGroupGrants), 10)
-	}
-
-	return ret, nextPageToken
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
