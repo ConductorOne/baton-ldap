@@ -34,6 +34,8 @@ function write (data, opts = {}) {
 
 
 // Org
+// Uncomment this if your ldap server doesn't auto-create an org
+/*
 write(`dn: dc=example,dc=org
 dc: example
 o: example
@@ -42,6 +44,7 @@ objectclass: dcObject
 objectclass: organization
 
 `);
+*/
 
 // Groups
 for (let groupId = 0; groupId < groupCount; groupId++) {

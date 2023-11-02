@@ -19,6 +19,8 @@ func main() {
 	ctx := context.Background()
 
 	cfg := &config{}
+	cfg.ClientID = "baton-ldap"
+
 	cmd, err := cli.NewCmd(ctx, "baton-ldap", cfg, validateConfig, getConnector)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
