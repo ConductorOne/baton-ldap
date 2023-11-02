@@ -41,7 +41,7 @@ baton resources
 ```
 
 ## how to test 
-you can use this docker.yaml to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server. 
+you can use this compose.yaml to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server.
 
 ```
 version: '3.7'
@@ -64,6 +64,8 @@ services:
       - LDAP_ADMIN_PASSWORD=admin
       - LDAP_CONFIG_PASSWORD=config_pass
       - "LDAP_BASE_DN=dc=example,dc=org"
+      - LDAP_REMOVE_CONFIG_AFTER_SETUP=false
+      - DISABLE_CHOWN=true
     networks:
       - openldap
   
@@ -88,6 +90,10 @@ networks:
 
 Run `docker-compose up -d` to launch the containers.
 You can then access the PHP LDAP admin server at http://localhost:80 and login with the admin credentials you provided in the docker-compose file.
+
+username: `CN=admin,DC=example,DC=org`
+password: `admin`
+
 After you login you can create new resources to be synced by baton. 
 
 After creating new resources on the LDAP server, use the `baton-ldap` cli to sync the data from the LDAP server with the example command below.

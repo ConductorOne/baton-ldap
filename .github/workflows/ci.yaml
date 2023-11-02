@@ -36,3 +36,46 @@ jobs:
         uses: guyarb/golang-test-annotations@v0.5.1
         with:
           test-results: test.json
+  test:
+    runs-on: ubuntu-latest
+    services:
+      openldap:
+        image: osixia/openldap:latest
+        ports:
+          - "389:389"
+          - "636:636"
+        env:
+          LDAP_ORGANISATION: example
+          LDAP_DOMAIN: example.org
+          LDAP_ADMIN_USERNAME: admin
+          LDAP_ADMIN_PASSWORD: admin
+          LDAP_CONFIG_PASSWORD: config_pass
+          LDAP_BASE_DN: "dc=example,dc=org"
+          BITNAMI_DEBUG: true
+          LDAP_REMOVE_CONFIG_AFTER_SETUP: false
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.20.x
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '21.x'
+      - name: Install ldapadd
+        run: sudo apt install ldap-utils
+      - name: Create ldif files
+        run: node ./scripts/ldif.js && ls -la
+      - name: Import ldif into openldap
+        run: ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00000.ldif && ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00001.ldif && ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00002.ldif
+      - name: Build baton-ldap
+        run: go build ./cmd/baton-ldap
+      - name: Run baton-ldap
+        env:
+          BATON_PASSWORD: admin
+          BATON_BASE_DN: 'dc=example,dc=org'
+          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
+          BATON_DOMAIN: 'localhost'
+        run: ./baton-ldap

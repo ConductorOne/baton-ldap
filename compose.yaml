@@ -1,0 +1,47 @@
+version: '3.7'
+services:
+  openldap:
+    image: osixia/openldap:latest
+    container_name: openldap
+    hostname: openldap
+    ports:
+      - "389:389"
+      - "636:636"
+    # Uncomment these lines if you want to persist data.
+    # volumes:
+    #   - ./data/certificates:/container/service/slapd/assets/certs
+    #   - ./data/slapd/database:/var/lib/ldap
+    #   - ./data/slapd/config:/etc/ldap/slapd.d
+    environment:
+      # If you want to persist data, set the UID/GID to the owner user/groups in your volume mounts
+      # - LDAP_OPENLDAP_UID=501
+      # - LDAP_OPENLDAP_GID=20
+      # - DISABLE_CHOWN=true
+      - LDAP_ORGANISATION=example
+      - LDAP_DOMAIN=example.org
+      - LDAP_ADMIN_USERNAME=admin
+      - LDAP_ADMIN_PASSWORD=admin
+      - LDAP_CONFIG_PASSWORD=config_pass
+      - "LDAP_BASE_DN=dc=example,dc=org"
+      - BITNAMI_DEBUG=true
+      - LDAP_REMOVE_CONFIG_AFTER_SETUP=false
+    networks:
+      - openldap
+  
+  phpldapadmin:
+    image: osixia/phpldapadmin:latest
+    container_name: phpldapadmin
+    hostname: phpldapadmin
+    ports:
+      - "80:80"
+    environment:
+      - PHPLDAPADMIN_LDAP_HOSTS=openldap
+      - PHPLDAPADMIN_HTTPS=false
+    depends_on:
+      - openldap
+    networks:
+      - openldap
+
+networks:
+  openldap:
+    driver: bridge
