@@ -1,5 +1,11 @@
-name: ci
-on: pull_request
+name: CI Tests
+on:
+  pull_request:
+    types: [opened, reopened]
+  push:
+    branches:
+      - main
+
 jobs:
   go-lint:
     runs-on: ubuntu-latest
