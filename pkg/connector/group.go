@@ -57,7 +57,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	groupName := group.GetAttributeValue(attrGroupCommonName)
 
 	resource, err := rs.NewGroupResource(
-		titleCaser.String(groupName),
+		groupName,
 		resourceTypeGroup,
 		group.DN,
 		groupTraitOptions,
