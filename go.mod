@@ -1,6 +1,6 @@
 module github.com/conductorone/baton-ldap
 
-go 1.20
+go 1.21
 
 require (
 	github.com/conductorone/baton-sdk v0.1.9
