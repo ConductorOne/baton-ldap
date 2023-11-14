@@ -85,3 +85,17 @@ jobs:
           BATON_USER_DN: 'CN=admin,DC=example,DC=org'
           BATON_DOMAIN: 'localhost'
         run: ./baton-ldap
+      - name: Revoke a grant
+        env:
+          BATON_PASSWORD: admin
+          BATON_BASE_DN: 'dc=example,dc=org'
+          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
+          BATON_DOMAIN: 'localhost'
+        run: ./baton-ldap --revoke-grant 'group:cn=testgroup00000,dc=example,dc=org:member:user:cn=testuser00999,dc=example,dc=org'
+      - name: Grant an entitlement
+        env:
+          BATON_PASSWORD: admin
+          BATON_BASE_DN: 'dc=example,dc=org'
+          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
+          BATON_DOMAIN: 'localhost'
+        run: ./baton-ldap --grant-entitlement 'group:cn=testgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999,dc=example,dc=org' --grant-principal-type 'user'
