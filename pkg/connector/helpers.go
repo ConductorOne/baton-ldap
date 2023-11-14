@@ -7,14 +7,10 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/go-ldap/ldap/v3"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var ResourcesPageSize = 50
-
-var titleCaser = cases.Title(language.English)
 
 func annotationsForUserResourceType() annotations.Annotations {
 	annos := annotations.Annotations{}

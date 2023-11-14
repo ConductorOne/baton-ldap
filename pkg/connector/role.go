@@ -50,7 +50,7 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 
 	roleName := role.GetAttributeValue(attrRoleCommonName)
 	resource, err := rs.NewRoleResource(
-		titleCaser.String(roleName),
+		roleName,
 		resourceTypeRole,
 		role.DN,
 		roleTraitOptions,
