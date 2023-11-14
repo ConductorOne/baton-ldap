@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -233,6 +234,26 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	return rv, pageToken, nil, nil
 }
 
+func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap3.Entry, error) {
+	groupEntries, _, err := g.client.LdapSearch(
+		ctx,
+		groupFilter,
+		nil,
+		"",
+		uint32(ResourcesPageSize),
+		groupDN,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to get group: %w", err)
+	}
+
+	if len(groupEntries) == 0 {
+		return nil, fmt.Errorf("ldap-connector: group DN %s not found", groupDN)
+	}
+
+	return groupEntries[0], nil
+}
+
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	if principal.Id.ResourceType != resourceTypeUser.Id {
 		return nil, fmt.Errorf("baton-ldap: only users can have group membership granted")
@@ -247,9 +268,24 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, err
 	}
 
-	principalDNArr := []string{principal.Id.Resource}
 	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
-	modifyRequest.Add(attrGroupMember, principalDNArr)
+
+	group, err := g.getGroup(ctx, groupDN)
+	if err != nil {
+		return nil, err
+	}
+
+	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
+		dn, err := ldap3.ParseDN(principal.Id.Resource)
+		if err != nil {
+			return nil, err
+		}
+		username := []string{dn.RDNs[0].Attributes[0].Value}
+		modifyRequest.Add(attrGroupMemberPosix, username)
+	} else {
+		principalDNArr := []string{principal.Id.Resource}
+		modifyRequest.Add(attrGroupMember, principalDNArr)
+	}
 
 	// grant group membership to the principal
 	err = g.client.LdapModify(
@@ -273,12 +309,27 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 
 	groupDN := entitlement.Resource.Id.Resource
 
-	principalDNArr := []string{principal.Id.Resource}
 	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
-	modifyRequest.Delete(attrGroupMember, principalDNArr)
+
+	group, err := g.getGroup(ctx, groupDN)
+	if err != nil {
+		return nil, err
+	}
+
+	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
+		dn, err := ldap3.ParseDN(principal.Id.Resource)
+		if err != nil {
+			return nil, err
+		}
+		username := []string{dn.RDNs[0].Attributes[0].Value}
+		modifyRequest.Delete(attrGroupMemberPosix, username)
+	} else {
+		principalDNArr := []string{principal.Id.Resource}
+		modifyRequest.Delete(attrGroupMember, principalDNArr)
+	}
 
 	// revoke group membership from the principal
-	err := g.client.LdapModify(
+	err = g.client.LdapModify(
 		ctx,
 		modifyRequest,
 	)
