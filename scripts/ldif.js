@@ -6,7 +6,7 @@
 const fs = require('node:fs');
 
 const userCount = 1000;
-const groupCount = 100;
+const groupCount = 50;
 const maxFileSize = 2000000; // php ldap admin has a 2MB limit
 
 let fileSize = 0;
@@ -46,7 +46,7 @@ objectclass: organization
 `);
 */
 
-// Groups
+// Posix groups
 for (let groupId = 0; groupId < groupCount; groupId++) {
   const groupIdStr = ("0000" + groupId).slice(-5);
   let groupStr = `dn: cn=testgroup${groupIdStr},dc=example,dc=org
@@ -59,6 +59,25 @@ gidNumber: ${groupId}
   for (let userId = 0; userId < userCount; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
     groupStr += `memberuid: testuser${userIdStr}
+`;
+  }
+
+  write(groupStr + "\n");
+}
+
+// Non-posix groups
+for (let groupId = 0; groupId < groupCount; groupId++) {
+  const groupIdStr = ("0000" + groupId).slice(-5);
+  let groupStr = `dn: cn=othertestgroup${groupIdStr},dc=example,dc=org
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: othertestgroup${groupIdStr}
+owner: cn=testuser00000,dc=example,dc=org
+`;
+
+  for (let userId = 0; userId < userCount; userId++) {
+    const userIdStr = ("00000" + userId).slice(-5);
+    groupStr += `uniquemember: cn=testuser${userIdStr},dc=example,dc=org
 `;
   }
 
