@@ -186,9 +186,6 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 
 	memberIds := parseValues(ldapGroup[0], []string{attrGroupMember, attrGroupMemberPosix})
-	if len(memberIds) == 0 {
-		return nil, "", nil, fmt.Errorf("ldap-connector: no members found")
-	}
 
 	// create membership grants
 	var rv []*v2.Grant
