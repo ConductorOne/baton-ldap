@@ -137,26 +137,39 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	// TODO: fetch by cn instead of gid?
+	groupId := ""
 	v, ok := groupTrait.Profile.Fields["gid"]
-	if !ok {
-		return nil, "", nil, fmt.Errorf("ldap-connector: no group id")
+	if ok {
+		s, ok := v.Kind.(*structpb.Value_StringValue)
+		if ok {
+			groupId = s.StringValue
+		}
 	}
-	s, ok := v.Kind.(*structpb.Value_StringValue)
-	if !ok {
-		return nil, "", nil, fmt.Errorf("ldap-connector: group id isn't a string")
-	}
-	groupId := s.StringValue
 
-	query := fmt.Sprintf(groupIdFilter, groupId)
-	ldapGroup, nextPage, err := g.client.LdapSearch(
-		ctx,
-		query,
-		nil,
-		page,
-		uint32(ResourcesPageSize),
-		"",
-	)
+	var ldapGroup []*ldap3.Entry
+	var nextPage string
+
+	if groupId == "" {
+		ldapGroup, nextPage, err = g.client.LdapSearch(
+			ctx,
+			groupFilter,
+			nil,
+			"",
+			uint32(ResourcesPageSize),
+			resource.Id.Resource,
+		)
+	} else {
+		query := fmt.Sprintf(groupIdFilter, groupId)
+		ldapGroup, nextPage, err = g.client.LdapSearch(
+			ctx,
+			query,
+			nil,
+			page,
+			uint32(ResourcesPageSize),
+			"",
+		)
+	}
+
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list group members: %w", err)
 	}
