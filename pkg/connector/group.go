@@ -185,11 +185,11 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	memberIds := parseValues(ldapGroup[0], []string{attrGroupMember, attrGroupMemberPosix})
+	memberIDs := parseValues(ldapGroup[0], []string{attrGroupMember, attrGroupMemberPosix})
 
 	// create membership grants
 	var rv []*v2.Grant
-	for _, memberId := range memberIds {
+	for _, memberId := range memberIDs {
 		var memberEntry []*ldap.Entry
 
 		if parsedDN, err := ldap3.ParseDN(memberId); err == nil {
