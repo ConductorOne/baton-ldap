@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -23,10 +24,13 @@ const (
 	attrLastName        = "sn"
 	attrUserMail        = "mail"
 	attrUserDisplayName = "displayName"
+	attrUserCreatedAt   = "createTimestamp"
 
 	// Microsoft active directory specific attribute.
 	attrUserAccountControl = "userAccountControl"
 )
+
+var userAttrs = []string{"*", "+"}
 
 type userResourceType struct {
 	resourceType *v2.ResourceType
@@ -104,6 +108,12 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		rs.WithStatus(userStatus),
 	}
 
+	createdAt := user.GetAttributeValue(attrUserCreatedAt)
+	createTime, err := time.Parse("20060102150405Z0700", createdAt)
+	if err == nil {
+		userTraitOptions = append(userTraitOptions, rs.WithCreatedAt(createTime))
+	}
+
 	// if no display name, use the user id
 	if displayName == "" {
 		displayName = userId
@@ -131,7 +141,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 	userEntries, nextPage, err := u.client.LdapSearch(
 		ctx,
 		userFilter,
-		nil,
+		userAttrs,
 		page,
 		uint32(ResourcesPageSize),
 		"",
