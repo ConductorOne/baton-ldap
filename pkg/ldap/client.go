@@ -120,8 +120,11 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 			attrNames = []string{"*"}
 		}
 		scope := ldap.ScopeBaseObject
-		if baseDNOverride == "" {
-			baseDNOverride = client.baseDN
+
+		// This function gets called on retries, so don't change the value of args, otherwise we don't set scope
+		baseDNOverride_ := baseDNOverride
+		if baseDNOverride_ == "" {
+			baseDNOverride_ = client.baseDN
 			scope = ldap.ScopeWholeSubtree
 		}
 
@@ -130,7 +133,7 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 		}
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
-			BaseDN:       baseDNOverride,
+			BaseDN:       baseDNOverride_,
 			Scope:        scope,
 			DerefAliases: ldap.DerefAlways,
 			Filter:       filter,
