@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -20,7 +22,7 @@ type clientPool = *puddle.Pool[*ldapConn]
 
 const (
 	clientPoolSize     = 5
-	maxConnectAttempts = clientPoolSize + 1
+	maxConnectAttempts = clientPoolSize + 10
 	defaultPageSize    = 100
 )
 
@@ -30,13 +32,40 @@ type Client struct {
 
 type Entry = ldap.Entry
 
+func isNetworkError(ctx context.Context, err error) bool {
+	// l := ctxzap.Extract(ctx)
+	// l.Warn("checking is network error", zap.Error(err), zap.String("error", err.Error()))
+	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
+		return true
+	}
+
+	if strings.HasPrefix(err.Error(), "unable to read LDAP response packet") {
+		return true
+	}
+
+	return false
+}
+
 func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client *ldapConn) error) error {
 	l := ctxzap.Extract(ctx)
 
 	connectAttempts := 0
 	for connectAttempts < maxConnectAttempts {
+		if connectAttempts > 0 {
+			l.Warn("retrying connection", zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+			time.Sleep(time.Duration(connectAttempts+5) * time.Second)
+		}
 		cp, err := c.pool.Acquire(ctx)
 		if err != nil {
+			if isNetworkError(ctx, err) {
+				l.Warn("network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+				if cp != nil {
+					cp.Destroy()
+				}
+				connectAttempts++
+				continue
+			}
+
 			l.Error("baton-ldap: client failed to acquire connection", zap.Error(err))
 			return err
 		}
@@ -44,14 +73,16 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 		err = f(poolClient)
 		if err != nil {
-			if ldap.IsErrorWithCode(err, 200) {
+			if isNetworkError(ctx, err) {
+				l.Warn("network error. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				cp.Destroy()
 				connectAttempts++
 				continue
 			}
+
 			// If we are revoking a user's membership from a resource, and the user is not a member of the resource, we don't want to return an error.
 			// If we are adding a user to a resource, and the user is already a member of the resource, we also don't want to return an error.
-			if (ldap.IsErrorWithCode(err, 68) || ldap.IsErrorWithCode(err, 53)) && isModify {
+			if (ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) || ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform)) && isModify {
 				return nil
 			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
