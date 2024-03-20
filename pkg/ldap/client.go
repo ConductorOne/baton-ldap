@@ -32,13 +32,12 @@ type Client struct {
 
 type Entry = ldap.Entry
 
-func isNetworkError(ctx context.Context, err error) bool {
-	// l := ctxzap.Extract(ctx)
-	// l.Warn("checking is network error", zap.Error(err), zap.String("error", err.Error()))
+func isNetworkError(err error) bool {
 	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
 		return true
 	}
 
+	// The ldap client library sometimes returns an error with this message when it's actually a network error
 	if strings.HasPrefix(err.Error(), "unable to read LDAP response packet") {
 		return true
 	}
@@ -52,13 +51,13 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 	connectAttempts := 0
 	for connectAttempts < maxConnectAttempts {
 		if connectAttempts > 0 {
-			l.Warn("retrying connection", zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
-			time.Sleep(time.Duration(connectAttempts+5) * time.Second)
+			l.Warn("baton-ldap: retrying connection", zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+			time.Sleep(time.Duration(connectAttempts) * time.Second)
 		}
 		cp, err := c.pool.Acquire(ctx)
 		if err != nil {
-			if isNetworkError(ctx, err) {
-				l.Warn("network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+			if isNetworkError(err) {
+				l.Warn("baton-ldap: network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				if cp != nil {
 					cp.Destroy()
 				}
@@ -73,8 +72,8 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 		err = f(poolClient)
 		if err != nil {
-			if isNetworkError(ctx, err) {
-				l.Warn("network error. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+			if isNetworkError(err) {
+				l.Warn("baton-ldap: network error. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				cp.Destroy()
 				connectAttempts++
 				continue
@@ -102,6 +101,8 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	var ret []*ldap.Entry
 	var nextPageToken string
 
+	// TODO (ggreer): Reconnecting with a pageToken doesn't work because the ldap cookie is per-connection
+	// To fix this, we should restart the query with no pageToken
 	err := c.getConnection(ctx, false, func(client *ldapConn) error {
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
