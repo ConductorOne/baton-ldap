@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -20,7 +22,7 @@ type clientPool = *puddle.Pool[*ldapConn]
 
 const (
 	clientPoolSize     = 5
-	maxConnectAttempts = clientPoolSize + 1
+	maxConnectAttempts = clientPoolSize + 10
 	defaultPageSize    = 100
 )
 
@@ -30,13 +32,39 @@ type Client struct {
 
 type Entry = ldap.Entry
 
+func isNetworkError(err error) bool {
+	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
+		return true
+	}
+
+	// The ldap client library sometimes returns an error with this message when it's actually a network error
+	if strings.HasPrefix(err.Error(), "unable to read LDAP response packet") {
+		return true
+	}
+
+	return false
+}
+
 func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client *ldapConn) error) error {
 	l := ctxzap.Extract(ctx)
 
 	connectAttempts := 0
 	for connectAttempts < maxConnectAttempts {
+		if connectAttempts > 0 {
+			l.Warn("baton-ldap: retrying connection", zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+			time.Sleep(time.Duration(connectAttempts) * time.Second)
+		}
 		cp, err := c.pool.Acquire(ctx)
 		if err != nil {
+			if isNetworkError(err) {
+				l.Warn("baton-ldap: network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
+				if cp != nil {
+					cp.Destroy()
+				}
+				connectAttempts++
+				continue
+			}
+
 			l.Error("baton-ldap: client failed to acquire connection", zap.Error(err))
 			return err
 		}
@@ -44,14 +72,16 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 		err = f(poolClient)
 		if err != nil {
-			if ldap.IsErrorWithCode(err, 200) {
+			if isNetworkError(err) {
+				l.Warn("baton-ldap: network error. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				cp.Destroy()
 				connectAttempts++
 				continue
 			}
+
 			// If we are revoking a user's membership from a resource, and the user is not a member of the resource, we don't want to return an error.
 			// If we are adding a user to a resource, and the user is already a member of the resource, we also don't want to return an error.
-			if (ldap.IsErrorWithCode(err, 68) || ldap.IsErrorWithCode(err, 53)) && isModify {
+			if (ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) || ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform)) && isModify {
 				return nil
 			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
@@ -71,6 +101,8 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	var ret []*ldap.Entry
 	var nextPageToken string
 
+	// TODO (ggreer): Reconnecting with a pageToken doesn't work because the ldap cookie is per-connection
+	// To fix this, we should restart the query with no pageToken
 	err := c.getConnection(ctx, false, func(client *ldapConn) error {
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
@@ -89,8 +121,11 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 			attrNames = []string{"*"}
 		}
 		scope := ldap.ScopeBaseObject
-		if baseDNOverride == "" {
-			baseDNOverride = client.baseDN
+
+		// This function gets called on retries, so don't change the value of args, otherwise we don't set scope
+		baseDN := baseDNOverride
+		if baseDN == "" {
+			baseDN = client.baseDN
 			scope = ldap.ScopeWholeSubtree
 		}
 
@@ -99,7 +134,7 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 		}
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
-			BaseDN:       baseDNOverride,
+			BaseDN:       baseDN,
 			Scope:        scope,
 			DerefAliases: ldap.DerefAlways,
 			Filter:       filter,
