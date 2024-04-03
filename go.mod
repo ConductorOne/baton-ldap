@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.20
 
 require (
-	github.com/conductorone/baton-sdk v0.1.28
+	github.com/conductorone/baton-sdk v0.1.31
 	github.com/go-ldap/ldap/v3 v3.4.5
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.1
