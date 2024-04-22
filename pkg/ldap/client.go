@@ -133,6 +133,8 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 			filter = "(objectClass=*)"
 		}
 
+		l.Debug("searching for ldap entries", zap.String("baseDN", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
+
 		resp, err := client.conn.Search(&ldap.SearchRequest{
 			BaseDN:       baseDN,
 			Scope:        scope,
