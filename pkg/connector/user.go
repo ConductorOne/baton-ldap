@@ -6,11 +6,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
+
+	"github.com/conductorone/baton-ldap/pkg/ldap"
 )
 
 // InetOrgPerson resource structure
@@ -82,6 +85,8 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 
 // Create a new connector resource for an LDAP User.
 func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
+	l := ctxzap.Extract(ctx)
+
 	firstName, lastName, displayName := parseUserNames(user)
 	userId := user.GetAttributeValue(attrUserUID)
 
@@ -119,6 +124,8 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		displayName = userId
 	}
 
+	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("dn", user.DN))
+
 	resource, err := rs.NewUserResource(
 		displayName,
 		resourceTypeUser,
@@ -133,6 +140,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 }
 
 func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
 	bag, page, err := parsePageToken(pt.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
 	if err != nil {
 		return nil, "", nil, err
@@ -158,7 +166,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 	var rv []*v2.Resource
 	for _, userEntry := range userEntries {
 		userEntryCopy := userEntry
-
+		l.Debug("processing user", zap.String("dn", userEntry.DN))
 		ur, err := userResource(ctx, userEntryCopy)
 		if err != nil {
 			return nil, pageToken, nil, err
