@@ -81,7 +81,7 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 			// If we are revoking a user's membership from a resource, and the user is not a member of the resource, we don't want to return an error.
 			// If we are adding a user to a resource, and the user is already a member of the resource, we also don't want to return an error.
-			if (ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) || ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform)) && isModify {
+			if (ldap.IsErrorAnyOf(err, ldap.LDAPResultAttributeOrValueExists, ldap.LDAPResultEntryAlreadyExists, ldap.LDAPResultUnwillingToPerform)) && isModify {
 				return nil
 			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
