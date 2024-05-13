@@ -91,6 +91,7 @@ for (let userId = 0; userId < 5000; userId++) {
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
+telephoneNumber: +1509555${userIdStr}
 uid: testuser${userIdStr}
 sn: testuser${userIdStr}
 givenName: test
@@ -101,6 +102,7 @@ gidNumber: 500
 gecos: Test User ${userIdStr}
 loginShell: /bin/bash
 homeDirectory: /home/testuser${userIdStr}
+title: Test*User ${userIdStr}
 
 `);
 }
