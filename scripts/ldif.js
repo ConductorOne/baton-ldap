@@ -77,7 +77,7 @@ owner: cn=testuser00000,dc=example,dc=org
 
   for (let userId = 0; userId < userCount; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
-    groupStr += `uniquemember: cn=testuser${userIdStr},dc=example,dc=org
+    groupStr += `uniquemember: cn=testuser${userIdStr}@example.com,dc=example,dc=org
 `;
   }
 
@@ -85,23 +85,42 @@ owner: cn=testuser00000,dc=example,dc=org
 }
 
 // Users
-for (let userId = 0; userId < 5000; userId++) {
-    const userIdStr = ("00000" + userId).slice(-5);
-    write(`dn: cn=testuser${userIdStr},dc=example,dc=org
+for (let userId = 0; userId < userCount; userId++) {
+  const userIdStr = ("00000" + userId).slice(-5);
+  const email = `testuser${userIdStr}@example.com`
+  write(`dn: cn=${email},dc=example,dc=org
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
 telephoneNumber: +1509555${userIdStr}
 uid: testuser${userIdStr}
 sn: testuser${userIdStr}
-givenName: test
-cn: testuser${userIdStr}
-displayName: test
+givenName: test ${userIdStr}
+cn: ${email}
+displayName: test ${userIdStr}
 uidNumber: ${(10000 + userId).toString()}
 gidNumber: 500
 gecos: Test User ${userIdStr}
 loginShell: /bin/bash
 homeDirectory: /home/testuser${userIdStr}
+title: Test*User ${userIdStr}
+
+`);
+}
+
+// Non-posix users
+for (let userId = 0; userId < userCount; userId++) {
+  const userIdStr = ("00000" + userId).slice(-5);
+  const email = `othertestuser${userIdStr}@example.com`
+  write(`dn: cn=${email},dc=example,dc=org
+objectClass: inetOrgPerson
+objectClass: top
+telephoneNumber: +1509555${userIdStr}
+sn: othertestuser${userIdStr}
+uid: testuser${userIdStr}
+givenName: test ${userIdStr}
+cn: ${email}
+displayName: other test ${userIdStr}
 title: Test*User ${userIdStr}
 
 `);
