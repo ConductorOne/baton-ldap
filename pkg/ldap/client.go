@@ -186,6 +186,8 @@ func (c *Client) CreateMemberEntry(ctx context.Context, memberId string) (string
 func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
 	l := ctxzap.Extract(ctx)
 
+	l.Debug("modifying ldap entry", zap.String("DN", modifyRequest.DN), zap.Any("changes", modifyRequest.Changes))
+
 	err := c.getConnection(ctx, true, func(client *ldapConn) error {
 		return client.conn.Modify(modifyRequest)
 	})
