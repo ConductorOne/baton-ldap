@@ -117,7 +117,7 @@ objectClass: inetOrgPerson
 objectClass: top
 telephoneNumber: +1509555${userIdStr}
 sn: othertestuser${userIdStr}
-uid: testuser${userIdStr}
+uid: othertestuser${userIdStr}
 givenName: test ${userIdStr}
 cn: ${email}
 displayName: other test ${userIdStr}
