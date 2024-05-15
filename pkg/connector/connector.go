@@ -36,12 +36,13 @@ var (
 )
 
 type LDAP struct {
-	client *ldap.Client
+	client                  *ldap.Client
+	disableOperationalAttrs bool
 }
 
 func (l *LDAP) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
-		userBuilder(l.client),
+		userBuilder(l.client, l.disableOperationalAttrs),
 		groupBuilder(l.client),
 		roleBuilder(l.client),
 	}
@@ -72,7 +73,7 @@ func (l *LDAP) Validate(ctx context.Context) (annotations.Annotations, error) {
 }
 
 // New returns the LDAP connector.
-func New(ctx context.Context, domain string, baseDN string, password string, userDN string) (*LDAP, error) {
+func New(ctx context.Context, domain string, baseDN string, password string, userDN string, disableOperationalAttrs bool) (*LDAP, error) {
 	conn, err := ldap.TestConnection(domain)
 	if err != nil {
 		return nil, err
@@ -85,6 +86,7 @@ func New(ctx context.Context, domain string, baseDN string, password string, use
 	}
 
 	return &LDAP{
-		client: ldapClient,
+		client:                  ldapClient,
+		disableOperationalAttrs: disableOperationalAttrs,
 	}, nil
 }
