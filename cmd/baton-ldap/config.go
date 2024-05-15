@@ -49,5 +49,6 @@ func cmdFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("base-dn", "", "The base DN to search from. Example: \"DC=baton,DC=example,DC=com\" ($BATON_BASE_DN)")
 	cmd.PersistentFlags().String("password", "", "The password to bind to the LDAP server. ($BATON_PASSWORD)")
 	cmd.PersistentFlags().String("user-dn", "", "The user DN to bind to the LDAP server. ($BATON_USER_DN)")
-	cmd.PersistentFlags().Bool("disable-operational-attrs", false, "Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched. ($BATON_DISABLE_OPERATIONAL_ATTRS)")
+	cmd.PersistentFlags().Bool("disable-operational-attrs", false,
+		"Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched. ($BATON_DISABLE_OPERATIONAL_ATTRS)")
 }
