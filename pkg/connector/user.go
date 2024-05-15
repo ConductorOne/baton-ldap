@@ -33,11 +33,12 @@ const (
 	attrUserAccountControl = "userAccountControl"
 )
 
-var userAttrs = []string{"*", "+"}
+var allAttrs = []string{"*", "+"}
 
 type userResourceType struct {
-	resourceType *v2.ResourceType
-	client       *ldap.Client
+	resourceType            *v2.ResourceType
+	client                  *ldap.Client
+	disableOperationalAttrs bool
 }
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -146,10 +147,15 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 		return nil, "", nil, err
 	}
 
+	attrs := allAttrs
+	if u.disableOperationalAttrs {
+		attrs = []string{"*"}
+	}
+
 	userEntries, nextPage, err := u.client.LdapSearch(
 		ctx,
 		userFilter,
-		userAttrs,
+		attrs,
 		page,
 		uint32(ResourcesPageSize),
 		"",
@@ -186,9 +192,10 @@ func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *ldap.Client) *userResourceType {
+func userBuilder(client *ldap.Client, disableOperationalAttrs bool) *userResourceType {
 	return &userResourceType{
-		resourceType: resourceTypeUser,
-		client:       client,
+		resourceType:            resourceTypeUser,
+		client:                  client,
+		disableOperationalAttrs: disableOperationalAttrs,
 	}
 }
