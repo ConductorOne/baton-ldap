@@ -21,16 +21,18 @@ import (
 const (
 	userFilter = "(objectClass=inetOrgPerson)"
 
-	attrUserUID         = "uid"
-	attrUserCommonName  = "cn"
-	attrFirstName       = "givenName"
-	attrLastName        = "sn"
-	attrUserMail        = "mail"
-	attrUserDisplayName = "displayName"
-	attrUserCreatedAt   = "createTimestamp"
+	attrUserUID           = "uid"
+	attrUserCommonName    = "cn"
+	attrFirstName         = "givenName"
+	attrLastName          = "sn"
+	attrUserMail          = "mail"
+	attrUserDisplayName   = "displayName"
+	attrUserCreatedAt     = "createTimestamp"
+	attrUserAuthTimestamp = "authTimestamp"
 
 	// Microsoft active directory specific attribute.
 	attrUserAccountControl = "userAccountControl"
+	attrUserLastLogon      = "lastLogonTimestamp"
 )
 
 var allAttrs = []string{"*", "+"}
@@ -84,6 +86,25 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 	return userStatus, nil
 }
 
+func parseUserLastLogin(lastLoginStr string) (*time.Time, error) {
+	lastLoginTime, err := time.Parse("20060102150405Z0700", lastLoginStr)
+	if err == nil {
+		lastLoginTime = lastLoginTime.UTC()
+		return &lastLoginTime, nil
+	}
+
+	// Number of 100 nanosecond intervals since 1601: https://learn.microsoft.com/en-us/windows/win32/adschema/a-lastlogontimestamp
+	lastLoginInt, err := strconv.ParseInt(lastLoginStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	lastLoginInt /= 10_000_000     // convert to seconds
+	lastLoginInt -= 11_644_473_600 // seconds from 1601 to 1970
+	lastLoginTime = time.Unix(lastLoginInt, 0).UTC()
+
+	return &lastLoginTime, nil
+}
+
 // Create a new connector resource for an LDAP User.
 func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	l := ctxzap.Extract(ctx)
@@ -118,6 +139,15 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	createTime, err := time.Parse("20060102150405Z0700", createdAt)
 	if err == nil {
 		userTraitOptions = append(userTraitOptions, rs.WithCreatedAt(createTime))
+	}
+
+	// Try openldap format first, then fall back to Active Directory's format
+	lastLogin, err := parseUserLastLogin(user.GetAttributeValue(attrUserLastLogon))
+	if err != nil {
+		lastLogin, _ = parseUserLastLogin(user.GetAttributeValue(attrUserAuthTimestamp))
+	}
+	if lastLogin != nil {
+		userTraitOptions = append(userTraitOptions, rs.WithLastLogin(*lastLogin))
 	}
 
 	// if no display name, use the user id
