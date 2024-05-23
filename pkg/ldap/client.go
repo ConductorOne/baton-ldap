@@ -217,7 +217,13 @@ func getConnection(ctx context.Context, serverAddr string, password string, user
 		return nil, err
 	}
 
-	err = conn.Bind(userDN, password)
+	if password == "" {
+		l.Debug("Binding to LDAP server unauthenticated")
+		err = conn.UnauthenticatedBind(userDN)
+	} else {
+		l.Debug("Binding to LDAP server authenticated")
+		err = conn.Bind(userDN, password)
+	}
 	if err != nil {
 		l.Error("Failed to bind to LDAP server", zap.Error(err))
 		return nil, err
