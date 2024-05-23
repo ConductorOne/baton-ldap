@@ -6,6 +6,7 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/go-ldap/ldap/v3"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,8 @@ type config struct {
 
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
 func validateConfig(ctx context.Context, cfg *config) error {
+	l := ctxzap.Extract(ctx)
+
 	if cfg.Domain == "" {
 		return fmt.Errorf("domain is required")
 	}
@@ -37,7 +40,7 @@ func validateConfig(ctx context.Context, cfg *config) error {
 	}
 
 	if cfg.Password == "" {
-		return fmt.Errorf("password is required")
+		l.Warn("No password supplied. Will do unauthenticated binding.")
 	}
 
 	return nil
