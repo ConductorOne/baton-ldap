@@ -202,7 +202,7 @@ func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyReque
 }
 
 func TestConnection(url string, insecureSkipVerify bool) (*ldap.Conn, error) {
-	dialOpts := ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: insecureSkipVerify})
+	dialOpts := ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: insecureSkipVerify}) // #nosec G402
 	conn, err := ldap.DialURL(url, dialOpts)
 	if err != nil {
 		return nil, err
