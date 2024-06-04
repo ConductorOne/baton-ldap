@@ -25,6 +25,12 @@ services:
       - "LDAP_BASE_DN=dc=example,dc=org"
       - BITNAMI_DEBUG=true
       - LDAP_REMOVE_CONFIG_AFTER_SETUP=false
+      - LDAP_ENABLE_TLS=true
+      - LDAP_LDAPS_PORT_NUMBER=636
+      - LDAP_TLS_CERT_FILE=/container/service/slapd/assets/certs/ldap.crt
+      - LDAP_TLS_KEY_FILE=/container/service/slapd/assets/certs/ldap.key
+      - LDAP_TLS_CA_FILE=/container/service/slapd/assets/certs/ca.crt
+      - LDAP_TLS_VERIFY_CLIENT=try
     networks:
       - openldap
   
