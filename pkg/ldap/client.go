@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -14,8 +15,9 @@ import (
 )
 
 type ldapConn struct {
-	conn   *ldap.Conn
-	baseDN string
+	conn               *ldap.Conn
+	baseDN             string
+	insecureSkipVerify bool
 }
 
 type clientPool = *puddle.Pool[*ldapConn]
@@ -199,8 +201,9 @@ func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyReque
 	return nil
 }
 
-func TestConnection(domain string) (*ldap.Conn, error) {
-	conn, err := ldap.DialURL(fmt.Sprintf("ldap://%s", domain))
+func TestConnection(url string, insecureSkipVerify bool) (*ldap.Conn, error) {
+	dialOpts := ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: insecureSkipVerify}) // #nosec G402
+	conn, err := ldap.DialURL(url, dialOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -208,10 +211,10 @@ func TestConnection(domain string) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func getConnection(ctx context.Context, serverAddr string, password string, userDN string) (*ldap.Conn, error) {
+func getConnection(ctx context.Context, serverUrl string, password string, userDN string, insecureSkipVerify bool) (*ldap.Conn, error) {
 	l := ctxzap.Extract(ctx)
 
-	conn, err := TestConnection(serverAddr)
+	conn, err := TestConnection(serverUrl, insecureSkipVerify)
 	if err != nil {
 		l.Error("Failed to dial LDAP server", zap.Error(err))
 		return nil, err
@@ -232,21 +235,22 @@ func getConnection(ctx context.Context, serverAddr string, password string, user
 	return conn, nil
 }
 
-func NewClient(ctx context.Context, serverAddr string, baseDN string, password string, userDN string) (*Client, error) {
-	_, err := getConnection(ctx, serverAddr, password, userDN)
+func NewClient(ctx context.Context, serverUrl string, baseDN string, password string, userDN string, insecureSkipVerify bool) (*Client, error) {
+	_, err := getConnection(ctx, serverUrl, password, userDN, insecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}
 
 	constructor := func(context.Context) (*ldapConn, error) {
-		conn, err := getConnection(ctx, serverAddr, password, userDN)
+		conn, err := getConnection(ctx, serverUrl, password, userDN, insecureSkipVerify)
 		if err != nil {
 			return nil, err
 		}
 
 		return &ldapConn{
-			conn:   conn,
-			baseDN: baseDN,
+			conn:               conn,
+			baseDN:             baseDN,
+			insecureSkipVerify: insecureSkipVerify,
 		}, nil
 	}
 	destructor := func(conn *ldapConn) {

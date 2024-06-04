@@ -59,6 +59,18 @@ jobs:
           LDAP_BASE_DN: "dc=example,dc=org"
           BITNAMI_DEBUG: true
           LDAP_REMOVE_CONFIG_AFTER_SETUP: false
+          LDAP_ENABLE_TLS: true
+          LDAP_LDAPS_PORT_NUMBER: 636
+          LDAP_TLS_CERT_FILE: /container/service/slapd/assets/certs/ldap.crt
+          LDAP_TLS_KEY_FILE: /container/service/slapd/assets/certs/ldap.key
+          LDAP_TLS_CA_FILE: /container/service/slapd/assets/certs/ca.crt
+          LDAP_TLS_VERIFY_CLIENT: try
+    env:
+      BATON_PASSWORD: admin
+      BATON_BASE_DN: 'dc=example,dc=org'
+      BATON_USER_DN: 'CN=admin,DC=example,DC=org'
+      BATON_URL: 'ldaps://localhost'
+      BATON_INSECURE_SKIP_VERIFY: true
     steps:
       - name: Install Go
         uses: actions/setup-go@v4
@@ -79,23 +91,8 @@ jobs:
       - name: Build baton-ldap
         run: go build ./cmd/baton-ldap
       - name: Run baton-ldap
-        env:
-          BATON_PASSWORD: admin
-          BATON_BASE_DN: 'dc=example,dc=org'
-          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
-          BATON_DOMAIN: 'localhost'
         run: ./baton-ldap
       - name: Revoke grants
-        env:
-          BATON_PASSWORD: admin
-          BATON_BASE_DN: 'dc=example,dc=org'
-          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
-          BATON_DOMAIN: 'localhost'
         run: ./baton-ldap --revoke-grant 'group:cn=testgroup00000,dc=example,dc=org:member:user:cn=testuser00999,dc=example,dc=org' && ./baton-ldap --revoke-grant 'group:cn=othertestgroup00000,dc=example,dc=org:member:user:cn=testuser00999,dc=example,dc=org'
       - name: Grant entitlements
-        env:
-          BATON_PASSWORD: admin
-          BATON_BASE_DN: 'dc=example,dc=org'
-          BATON_USER_DN: 'CN=admin,DC=example,DC=org'
-          BATON_DOMAIN: 'localhost'
         run: ./baton-ldap --grant-entitlement 'group:cn=testgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999,dc=example,dc=org' --grant-principal-type 'user' && ./baton-ldap --grant-entitlement 'group:cn=othertestgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999,dc=example,dc=org' --grant-principal-type 'user'

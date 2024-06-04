@@ -1,13 +1,14 @@
 module github.com/conductorone/baton-ldap
 
-go 1.20
+go 1.21
+
+toolchain go1.22.3
 
 require (
 	github.com/conductorone/baton-sdk v0.1.38
 	github.com/go-ldap/ldap/v3 v3.4.5
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.1
-	github.com/spf13/cobra v1.8.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842
 	google.golang.org/protobuf v1.34.1
@@ -17,6 +18,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/spf13/cobra v1.8.0 // indirect
 )
 
 require (

@@ -27,8 +27,6 @@ func main() {
 
 	cmd.Version = version
 
-	cmdFlags(cmd)
-
 	err = cmd.Execute()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -39,7 +37,11 @@ func main() {
 func getConnector(ctx context.Context, cfg *config) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
 
-	ldapConnector, err := connector.New(ctx, cfg.Domain, cfg.BaseDN, cfg.Password, cfg.UserDN, cfg.DisableOperationalAttrs)
+	if cfg.Url == "" && cfg.Domain != "" {
+		cfg.Url = fmt.Sprintf("ldap://%s", cfg.Domain)
+	}
+
+	ldapConnector, err := connector.New(ctx, cfg.Url, cfg.BaseDN, cfg.Password, cfg.UserDN, cfg.DisableOperationalAttrs, cfg.InsecureSkipVerify)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
 		return nil, err

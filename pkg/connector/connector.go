@@ -8,6 +8,8 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 var (
@@ -73,14 +75,17 @@ func (l *LDAP) Validate(ctx context.Context) (annotations.Annotations, error) {
 }
 
 // New returns the LDAP connector.
-func New(ctx context.Context, domain string, baseDN string, password string, userDN string, disableOperationalAttrs bool) (*LDAP, error) {
-	conn, err := ldap.TestConnection(domain)
+func New(ctx context.Context, serverUrl string, baseDN string, password string, userDN string, disableOperationalAttrs bool, insecureSkipVerify bool) (*LDAP, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("creating new LDAP connector", zap.String("serverUrl", serverUrl), zap.String("baseDN", baseDN), zap.Bool("disableOperationalAttrs", disableOperationalAttrs))
+	conn, err := ldap.TestConnection(serverUrl, insecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	ldapClient, err := ldap.NewClient(ctx, domain, baseDN, password, userDN)
+	ldapClient, err := ldap.NewClient(ctx, serverUrl, baseDN, password, userDN, insecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}
