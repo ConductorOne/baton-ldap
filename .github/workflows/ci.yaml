@@ -93,6 +93,6 @@ jobs:
       - name: Run baton-ldap
         run: ./baton-ldap
       - name: Revoke grants
-        run: ./baton-ldap --revoke-grant 'group:cn=testgroup00000,dc=example,dc=org:member:user:cn=testuser00999,dc=example,dc=org' && ./baton-ldap --revoke-grant 'group:cn=othertestgroup00000,dc=example,dc=org:member:user:cn=testuser00999,dc=example,dc=org'
+        run: ./baton-ldap --revoke-grant 'group:cn=testgroup00000,dc=example,dc=org:member:user:cn=testuser00999@example.com,dc=example,dc=org' && ./baton-ldap --revoke-grant 'group:cn=othertestgroup00000,dc=example,dc=org:member:user:cn=testuser00999@example.com,dc=example,dc=org'
       - name: Grant entitlements
-        run: ./baton-ldap --grant-entitlement 'group:cn=testgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999,dc=example,dc=org' --grant-principal-type 'user' && ./baton-ldap --grant-entitlement 'group:cn=othertestgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999,dc=example,dc=org' --grant-principal-type 'user'
+        run: ./baton-ldap --grant-entitlement 'group:cn=testgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999@example.com,dc=example,dc=org' --grant-principal-type 'user' && ./baton-ldap --grant-entitlement 'group:cn=othertestgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00999@example.com,dc=example,dc=org' --grant-principal-type 'user'
