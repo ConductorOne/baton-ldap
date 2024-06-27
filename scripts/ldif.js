@@ -58,7 +58,7 @@ gidNumber: ${groupId}
 
   for (let userId = 0; userId < userCount; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
-    groupStr += `memberUid: testuser${userIdStr}
+    groupStr += `memberUid: testuser${userIdStr}@example.com
 `;
   }
 
@@ -72,12 +72,12 @@ for (let groupId = 0; groupId < groupCount; groupId++) {
 objectClass: top
 objectClass: groupOfUniqueNames
 cn: othertestgroup${groupIdStr}
-owner: cn=testuser00000,dc=example,dc=org
+owner: cn=testuser00000@example.com,dc=example,dc=org
 `;
 
   for (let userId = 0; userId < userCount; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
-    groupStr += `uniquemember: cn=testuser${userIdStr},dc=example,dc=org
+    groupStr += `uniquemember: cn=testuser${userIdStr}@example.com,dc=example,dc=org
 `;
   }
 
@@ -88,12 +88,12 @@ owner: cn=testuser00000,dc=example,dc=org
 for (let userId = 0; userId < userCount; userId++) {
   const userIdStr = ("00000" + userId).slice(-5);
   const email = `testuser${userIdStr}@example.com`
-  write(`dn: cn=testuser${userIdStr},dc=example,dc=org
+  write(`dn: cn=${email},dc=example,dc=org
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
 telephoneNumber: +1509555${userIdStr}
-uid: testuser${userIdStr}
+uid: ${email}
 sn: testuser${userIdStr}
 givenName: test ${userIdStr}
 cn: ${email}
@@ -117,7 +117,7 @@ objectClass: inetOrgPerson
 objectClass: top
 telephoneNumber: +1509555${userIdStr}
 sn: othertestuser${userIdStr}
-uid: othertestuser${userIdStr}
+uid: ${email}
 givenName: test ${userIdStr}
 cn: ${email}
 displayName: other test ${userIdStr}
