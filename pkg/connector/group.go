@@ -12,6 +12,8 @@ import (
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	ldap3 "github.com/go-ldap/ldap/v3"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -128,6 +130,8 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
 		return nil, "", nil, err
@@ -202,7 +206,8 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 				parsedDN.String(),
 			)
 			if err != nil {
-				return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", memberId, err)
+				// TODO: collect errors
+				l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.String("parseDN", parsedDN.String()), zap.Error(err))
 			}
 		} else {
 			// Group member doesn't look like it is a DN, search for it as a UID
@@ -215,12 +220,13 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 				"",
 			)
 			if err != nil {
-				return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to get user with uid %s: %w", memberId, err)
+				// TODO: collect errors
+				l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.Error(err))
 			}
 		}
 
 		if len(memberEntry) == 0 {
-			return nil, pageToken, nil, fmt.Errorf("ldap-connector: failed to find user with dn or UID %s", memberId)
+			l.Error("ldap-connector: failed to find user with dn or UID", zap.String("member_id", memberId))
 		}
 
 		for _, e := range memberEntry {
