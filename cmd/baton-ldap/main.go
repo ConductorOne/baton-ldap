@@ -18,8 +18,10 @@ var version = "dev"
 func main() {
 	ctx := context.Background()
 
-	cfg := &config{}
-	cmd, err := cli.NewCmd(ctx, "baton-ldap", cfg, validateConfig, getConnector)
+	// cfg := &config{}
+	cmd, err := cli.NewCmd2(ctx, "baton-ldap", cfg, validateConfig, getConnector)
+
+	// cmd, err := cli.NewCmd(ctx, "baton-ldap", cfg, validateConfig, getConnector)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -34,10 +36,10 @@ func main() {
 	}
 }
 
-func getConnector(ctx context.Context, cfg *config) (types.ConnectorServer, error) {
+func getConnector(ctx context.Context, cfg *LdapCfg) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
 
-	if cfg.Url == "" && cfg.Domain != "" {
+	if cfg.Url.Value() == "" && cfg.Domain.Value() != "" {
 		cfg.Url = fmt.Sprintf("ldap://%s", cfg.Domain)
 	}
 
