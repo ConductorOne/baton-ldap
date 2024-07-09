@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	configschema "github.com/conductorone/baton-sdk/pkg/config"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/spf13/viper"
@@ -13,17 +13,17 @@ import (
 
 var (
 	//revive:disable-next-line:line-length-limit
-	disableOperationalAttrsField = configschema.BoolField("disable-operational-attrs", configschema.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
-	urlfield                     = configschema.StringField("url", configschema.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
-	domainField                  = configschema.StringField("domain", configschema.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com"`))
-	baseDNField                  = configschema.StringField("base-dn", configschema.WithDescription(`The base DN to search from. Example: "DC=baton,DC=example,DC=com"`))
-	passwordField                = configschema.StringField("password", configschema.WithDescription("The password to bind to the LDAP server"))
-	userDNField                  = configschema.StringField("user-dn", configschema.WithDescription("The user DN to bind to the LDAP server"))
-	insecureSkipVerifyField      = configschema.BoolField("insecure-skip-verify", configschema.WithDescription("If connecting over TLS, skip verifying the server certificate"))
+	disableOperationalAttrsField = field.BoolField("disable-operational-attrs", field.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
+	urlfield                     = field.StringField("url", field.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
+	domainField                  = field.StringField("domain", field.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com"`))
+	baseDNField                  = field.StringField("base-dn", field.WithDescription(`The base DN to search from. Example: "DC=baton,DC=example,DC=com"`))
+	passwordField                = field.StringField("password", field.WithDescription("The password to bind to the LDAP server"))
+	userDNField                  = field.StringField("user-dn", field.WithDescription("The user DN to bind to the LDAP server"))
+	insecureSkipVerifyField      = field.BoolField("insecure-skip-verify", field.WithDescription("If connecting over TLS, skip verifying the server certificate"))
 )
 
 // configurationFields defines the external configuration required for the connector to run.
-var configurationFields = []configschema.SchemaField{
+var configurationFields = []field.SchemaField{
 	urlfield,
 	domainField,
 	baseDNField,

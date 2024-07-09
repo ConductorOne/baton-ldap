@@ -143,7 +143,7 @@ github.com/aws/smithy-go/waiter
 # github.com/benbjohnson/clock v1.3.5
 ## explicit; go 1.15
 github.com/benbjohnson/clock
-# github.com/conductorone/baton-sdk v0.1.47 => /home/jorge/code/work/baton-sdk
+# github.com/conductorone/baton-sdk v0.1.47 => /Users/ggreer/code/github.com/ConductorOne/baton-sdk
 ## explicit; go 1.21
 github.com/conductorone/baton-sdk/internal/connector
 github.com/conductorone/baton-sdk/pb/c1/c1z/v1
@@ -154,7 +154,6 @@ github.com/conductorone/baton-sdk/pb/c1/ratelimit/v1
 github.com/conductorone/baton-sdk/pb/c1/reader/v2
 github.com/conductorone/baton-sdk/pb/c1/utls/v1
 github.com/conductorone/baton-sdk/pkg/annotations
-github.com/conductorone/baton-sdk/pkg/cli
 github.com/conductorone/baton-sdk/pkg/commands
 github.com/conductorone/baton-sdk/pkg/config
 github.com/conductorone/baton-sdk/pkg/connectorbuilder
@@ -167,6 +166,7 @@ github.com/conductorone/baton-sdk/pkg/dotc1z
 github.com/conductorone/baton-sdk/pkg/dotc1z/manager
 github.com/conductorone/baton-sdk/pkg/dotc1z/manager/local
 github.com/conductorone/baton-sdk/pkg/dotc1z/manager/s3
+github.com/conductorone/baton-sdk/pkg/field
 github.com/conductorone/baton-sdk/pkg/helpers
 github.com/conductorone/baton-sdk/pkg/logging
 github.com/conductorone/baton-sdk/pkg/metrics
@@ -622,4 +622,4 @@ modernc.org/memory
 # modernc.org/sqlite v1.29.9
 ## explicit; go 1.20
 modernc.org/sqlite/lib
-# github.com/conductorone/baton-sdk => /home/jorge/code/work/baton-sdk
+# github.com/conductorone/baton-sdk => /Users/ggreer/code/github.com/ConductorOne/baton-sdk

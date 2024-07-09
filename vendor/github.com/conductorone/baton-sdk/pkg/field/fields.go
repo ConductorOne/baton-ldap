@@ -1,4 +1,4 @@
-package configschema
+package field
 
 import (
 	"errors"
@@ -53,10 +53,18 @@ func (s SchemaField) String() (string, error) {
 
 func (s SchemaField) GetDescription() string {
 	if s.Description == "" {
-		return fmt.Sprintf("(BATON_%s)", toUpperCase(s.FieldName))
+		return fmt.Sprintf("($BATON_%s)", toUpperCase(s.FieldName))
 	}
 
-	return fmt.Sprintf("%s (BATON_%s)", s.Description, toUpperCase(s.FieldName))
+	return fmt.Sprintf("%s ($BATON_%s)", s.Description, toUpperCase(s.FieldName))
+}
+
+func (s SchemaField) GetName() string {
+	return s.FieldName
+}
+
+func (s SchemaField) GetType() reflect.Kind {
+	return s.FieldType
 }
 
 func BoolField(name string, optional ...fieldOption) SchemaField {

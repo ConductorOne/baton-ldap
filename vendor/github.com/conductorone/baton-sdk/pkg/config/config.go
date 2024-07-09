@@ -1,4 +1,4 @@
-package configschema
+package config
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/conductorone/baton-sdk/pkg/commands"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -18,8 +19,8 @@ func DefineConfiguration(
 	ctx context.Context,
 	connectorName string,
 	connector commands.GetConnectorFunc,
-	fields []SchemaField,
-	constrains ...SchemaFieldRelationship,
+	fields []field.SchemaField,
+	constrains ...field.SchemaFieldRelationship,
 ) (*viper.Viper, *cobra.Command, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
@@ -41,8 +42,8 @@ func DefineConfiguration(
 	v.AutomaticEnv()
 
 	// add default fields and constrains
-	fields = ensureDefaultFieldsExists(fields)
-	constrains = ensureDefaultRelationships(constrains)
+	fields = field.EnsureDefaultFieldsExists(fields)
+	constrains = field.EnsureDefaultRelationships(constrains)
 
 	// setup CLI with cobra
 	mainCMD := &cobra.Command{
@@ -117,9 +118,9 @@ func DefineConfiguration(
 	// apply constrains
 	for _, constrain := range constrains {
 		switch constrain.Kind {
-		case MutuallyExclusive:
+		case field.MutuallyExclusive:
 			mainCMD.MarkFlagsMutuallyExclusive(listFieldConstrainsAsStrings(constrain)...)
-		case RequiredTogether:
+		case field.RequiredTogether:
 			mainCMD.MarkFlagsRequiredTogether(listFieldConstrainsAsStrings(constrain)...)
 		}
 	}
@@ -131,12 +132,27 @@ func DefineConfiguration(
 		return nil, nil, err
 	}
 
-	// TODO (shackra): add the gRPC command and the capabilities command
+	grpcServerCmd := &cobra.Command{
+		Use:    "_connector-service",
+		Short:  "Start the connector service",
+		Hidden: true,
+		RunE:   commands.MakeGRPCServerCommand(ctx, connectorName, v, connector),
+	}
+	mainCMD.AddCommand(grpcServerCmd)
+
+	capabilitiesCmd := &cobra.Command{
+		Use:   "capabilities",
+		Short: "Get connector capabilities",
+		RunE:  commands.MakeCapabilitiesCommand(ctx, connectorName, v, connector),
+	}
+	mainCMD.AddCommand(capabilitiesCmd)
+
+	mainCMD.AddCommand(commands.AdditionalCommands(name, fields)...)
 
 	return v, mainCMD, nil
 }
 
-func listFieldConstrainsAsStrings(constrains SchemaFieldRelationship) []string {
+func listFieldConstrainsAsStrings(constrains field.SchemaFieldRelationship) []string {
 	var fields []string
 	for _, v := range constrains.Fields {
 		fields = append(fields, v.FieldName)
