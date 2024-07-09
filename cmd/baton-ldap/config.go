@@ -5,55 +5,70 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/conductorone/baton-sdk/pkg/cli"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"github.com/spf13/viper"
 )
 
-// config defines the external configuration required for the connector to run.
-type config struct {
-	cli.BaseConfig `mapstructure:",squash"` // Puts the base config options in the same place as the connector options
-
-	Url      string `mapstructure:"url" description:"The URL to connect to. Example: \"ldaps://baton.example.com\""`
-	Domain   string `mapstructure:"domain" description:"The fully-qualified LDAP domain to connect to. Example: \"baton.example.com\""`
-	BaseDN   string `mapstructure:"base-dn" description:"The base DN to search from. Example: \"DC=baton,DC=example,DC=com\""`
-	Password string `mapstructure:"password" description:"The password to bind to the LDAP server."`
-	UserDN   string `mapstructure:"user-dn" description:"The user DN to bind to the LDAP server."`
+var (
 	//revive:disable-next-line:line-length-limit
-	DisableOperationalAttrs bool `mapstructure:"disable-operational-attrs" description:"Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched."`
-	InsecureSkipVerify      bool `mapstructure:"insecure-skip-verify" description:"If connecting over TLS, skip verifying the server certificate."`
+	disableOperationalAttrsField = field.BoolField("disable-operational-attrs", field.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
+	urlField                     = field.StringField("url", field.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
+	domainField                  = field.StringField("domain", field.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com"`))
+	baseDNField                  = field.StringField("base-dn", field.WithDescription(`The base DN to search from. Example: "DC=baton,DC=example,DC=com"`))
+	passwordField                = field.StringField("password", field.WithDescription("The password to bind to the LDAP server"))
+	userDNField                  = field.StringField("user-dn", field.WithDescription("The user DN to bind to the LDAP server"))
+	insecureSkipVerifyField      = field.BoolField("insecure-skip-verify", field.WithDescription("If connecting over TLS, skip verifying the server certificate"))
+)
+
+// configurationFields defines the external configuration required for the connector to run.
+var configurationFields = []field.SchemaField{
+	urlField,
+	domainField,
+	baseDNField,
+	passwordField,
+	userDNField,
+	insecureSkipVerifyField,
+	disableOperationalAttrsField,
+}
+
+var configRelations = []field.SchemaFieldRelationship{
+	field.FieldsMutuallyExclusive(domainField, urlField),
 }
 
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
-func validateConfig(ctx context.Context, cfg *config) error {
+func validateConfig(ctx context.Context, v *viper.Viper) error {
 	l := ctxzap.Extract(ctx)
 
-	if cfg.Domain == "" && cfg.Url == "" {
+	domain := v.GetString(domainField.FieldName)
+	urlstr := v.GetString(urlField.FieldName)
+	if domain == "" && urlstr == "" {
 		return fmt.Errorf("domain or url is required")
 	}
 
-	if cfg.Domain != "" && cfg.Url != "" {
+	if domain != "" && urlstr != "" {
 		return fmt.Errorf("only one of domain or url is allowed")
 	}
 
-	if cfg.Url != "" {
-		_, err := url.Parse(cfg.Url)
+	if urlstr != "" {
+		_, err := url.Parse(urlstr)
 		if err != nil {
 			return fmt.Errorf("error parsing url: %w", err)
 		}
 	}
 
-	_, err := ldap.ParseDN(cfg.BaseDN)
+	_, err := ldap.ParseDN(v.GetString(baseDNField.FieldName))
 	if err != nil {
 		return err
 	}
 
-	_, err = ldap.ParseDN(cfg.UserDN)
+	_, err = ldap.ParseDN(v.GetString(userDNField.FieldName))
 	if err != nil {
 		return err
 	}
 
-	if cfg.Password == "" {
+	if v.GetString(passwordField.FieldName) == "" {
 		l.Warn("No password supplied. Will do unauthenticated binding.")
 	}
 
