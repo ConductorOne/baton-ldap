@@ -1,3 +1,4 @@
+version: 2
 project_name: baton-ldap
 builds:
   - binary: baton-ldap
@@ -36,6 +37,15 @@ builds:
       post:
         - gon .gon-arm64.json
         - mv dist/baton-ldap-darwin-arm64.signed.zip dist/macos-arm64_darwin_arm64/baton-ldap
+  - binary: baton-ldap
+    env:
+      - CGO_ENABLED=0
+    id: windows
+    main: ./cmd/baton-ldap
+    goos:
+      - windows
+    goarch:
+      - amd64
 archives:
   - id: linux-archive
     builds:
@@ -52,10 +62,18 @@ archives:
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}.zip"
     files:
       - none*
+  - id: windows-archive
+    builds:
+      - windows
+    format: zip
+    name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - none*
 release:
   ids:
     - linux-archive
     - darwin-archive
+    - windows-archive
 snapshot:
   name_template: "{{ incpatch .Version }}-dev"
 checksum:
@@ -65,10 +83,10 @@ checksum:
     - glob: ./dist/*-darwin-amd64.zip
     - glob: ./dist/*-darwin-arm64.zip
 brews:
-  - tap:
+  - repository:
       owner: conductorone
       name: homebrew-baton
-    folder: Formula
+    directory: Formula
     homepage: https://conductorone.com
     test: |
       system "#{bin}/baton-ldap -v"
