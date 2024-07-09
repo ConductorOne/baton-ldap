@@ -14,7 +14,7 @@ import (
 var (
 	//revive:disable-next-line:line-length-limit
 	disableOperationalAttrsField = field.BoolField("disable-operational-attrs", field.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
-	urlfield                     = field.StringField("url", field.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
+	urlField                     = field.StringField("url", field.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
 	domainField                  = field.StringField("domain", field.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com"`))
 	baseDNField                  = field.StringField("base-dn", field.WithDescription(`The base DN to search from. Example: "DC=baton,DC=example,DC=com"`))
 	passwordField                = field.StringField("password", field.WithDescription("The password to bind to the LDAP server"))
@@ -24,7 +24,7 @@ var (
 
 // configurationFields defines the external configuration required for the connector to run.
 var configurationFields = []field.SchemaField{
-	urlfield,
+	urlField,
 	domainField,
 	baseDNField,
 	passwordField,
@@ -33,12 +33,16 @@ var configurationFields = []field.SchemaField{
 	disableOperationalAttrsField,
 }
 
+var configRelations = []field.SchemaFieldRelationship{
+	field.FieldsMutuallyExclusive(domainField, urlField),
+}
+
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
 func validateConfig(ctx context.Context, v *viper.Viper) error {
 	l := ctxzap.Extract(ctx)
 
 	domain := v.GetString(domainField.FieldName)
-	urlstr := v.GetString(urlfield.FieldName)
+	urlstr := v.GetString(urlField.FieldName)
 	if domain == "" && urlstr == "" {
 		return fmt.Errorf("domain or url is required")
 	}

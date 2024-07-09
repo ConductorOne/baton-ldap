@@ -19,7 +19,7 @@ var version = "dev"
 func main() {
 	ctx := context.Background()
 
-	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, configurationFields, nil)
+	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, configurationFields, configRelations)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -41,13 +41,13 @@ func getConnector(ctx context.Context, v *viper.Viper) (types.ConnectorServer, e
 		return nil, err
 	}
 
-	if v.GetString(urlfield.FieldName) == "" && v.GetString(domainField.FieldName) != "" {
-		v.Set(urlfield.FieldName, fmt.Sprintf("ldap://%s", v.GetString(domainField.FieldName)))
+	if v.GetString(urlField.FieldName) == "" && v.GetString(domainField.FieldName) != "" {
+		v.Set(urlField.FieldName, fmt.Sprintf("ldap://%s", v.GetString(domainField.FieldName)))
 	}
 
 	ldapConnector, err := connector.New(
 		ctx,
-		v.GetString(urlfield.FieldName),
+		v.GetString(urlField.FieldName),
 		v.GetString(baseDNField.FieldName),
 		v.GetString(passwordField.FieldName),
 		v.GetString(userDNField.FieldName),
