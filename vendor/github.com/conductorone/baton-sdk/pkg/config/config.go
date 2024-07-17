@@ -94,6 +94,18 @@ func DefineConfiguration(
 			}
 			mainCMD.PersistentFlags().
 				StringP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
+		case reflect.Slice:
+			value, err := field.StringArray()
+			if err != nil {
+				return nil, nil, fmt.Errorf(
+					"field %s, %s: %w",
+					field.FieldName,
+					field.FieldType,
+					err,
+				)
+			}
+			mainCMD.PersistentFlags().
+				StringArrayP(field.FieldName, field.CLIShortHand, value, field.GetDescription())
 		default:
 			return nil, nil, fmt.Errorf(
 				"field %s, %s is not yet supported",
@@ -140,6 +152,8 @@ func DefineConfiguration(
 			mainCMD.MarkFlagsMutuallyExclusive(listFieldConstrainsAsStrings(constrain)...)
 		case field.RequiredTogether:
 			mainCMD.MarkFlagsRequiredTogether(listFieldConstrainsAsStrings(constrain)...)
+		case field.AtLeastOne:
+			mainCMD.MarkFlagsOneRequired(listFieldConstrainsAsStrings(constrain)...)
 		}
 	}
 
