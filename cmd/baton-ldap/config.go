@@ -38,6 +38,8 @@ var configRelations = []field.SchemaFieldRelationship{
 	field.FieldsAtLeastOneUsed(domainField, urlField),
 }
 
+var configuration = field.NewConfiguration(configurationFields, configRelations...)
+
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
 func validateConfig(ctx context.Context, v *viper.Viper) error {
 	l := ctxzap.Extract(ctx)

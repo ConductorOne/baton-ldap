@@ -19,7 +19,7 @@ var version = "dev"
 func main() {
 	ctx := context.Background()
 
-	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, configurationFields, configRelations)
+	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, configuration)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
