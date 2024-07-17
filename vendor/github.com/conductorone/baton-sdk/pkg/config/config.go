@@ -20,8 +20,7 @@ func DefineConfiguration(
 	ctx context.Context,
 	connectorName string,
 	connector cli.GetConnectorFunc,
-	fields []field.SchemaField,
-	constrains []field.SchemaFieldRelationship,
+	schema field.Configuration,
 	options ...connectorrunner.Option,
 ) (*viper.Viper, *cobra.Command, error) {
 	v := viper.New()
@@ -44,8 +43,8 @@ func DefineConfiguration(
 	v.AutomaticEnv()
 
 	// add default fields and constrains
-	fields = field.EnsureDefaultFieldsExists(fields)
-	constrains = field.EnsureDefaultRelationships(constrains)
+	schema.Fields = field.EnsureDefaultFieldsExists(schema.Fields)
+	schema.Constraints = field.EnsureDefaultRelationships(schema.Constraints)
 
 	// setup CLI with cobra
 	mainCMD := &cobra.Command{
@@ -53,11 +52,11 @@ func DefineConfiguration(
 		Short:         connectorName,
 		SilenceErrors: true,
 		SilenceUsage:  true,
-		RunE:          cli.MakeMainCommand(ctx, connectorName, v, connector, options...),
+		RunE:          cli.MakeMainCommand(ctx, connectorName, v, schema, connector, options...),
 	}
 
 	// add options to the main command
-	for _, field := range fields {
+	for _, field := range schema.Fields {
 		switch field.FieldType {
 		case reflect.Bool:
 			value, err := field.Bool()
@@ -115,10 +114,27 @@ func DefineConfiguration(
 				)
 			}
 		}
+
+		// mark required
+		if field.Required {
+			if field.FieldType == reflect.Bool {
+				return nil, nil, fmt.Errorf("requiring %s of type %s does not make sense", field.FieldName, field.FieldType)
+			}
+
+			err := mainCMD.MarkFlagRequired(field.FieldName)
+			if err != nil {
+				return nil, nil, fmt.Errorf(
+					"cannot require field %s, %s: %w",
+					field.FieldName,
+					field.FieldType,
+					err,
+				)
+			}
+		}
 	}
 
 	// apply constrains
-	for _, constrain := range constrains {
+	for _, constrain := range schema.Constraints {
 		switch constrain.Kind {
 		case field.MutuallyExclusive:
 			mainCMD.MarkFlagsMutuallyExclusive(listFieldConstrainsAsStrings(constrain)...)
@@ -138,7 +154,7 @@ func DefineConfiguration(
 		Use:    "_connector-service",
 		Short:  "Start the connector service",
 		Hidden: true,
-		RunE:   cli.MakeGRPCServerCommand(ctx, connectorName, v, connector),
+		RunE:   cli.MakeGRPCServerCommand(ctx, connectorName, v, schema, connector),
 	}
 	mainCMD.AddCommand(grpcServerCmd)
 
@@ -149,7 +165,7 @@ func DefineConfiguration(
 	}
 	mainCMD.AddCommand(capabilitiesCmd)
 
-	mainCMD.AddCommand(cli.AdditionalCommands(name, fields)...)
+	mainCMD.AddCommand(cli.AdditionalCommands(name, schema.Fields)...)
 
 	return v, mainCMD, nil
 }
