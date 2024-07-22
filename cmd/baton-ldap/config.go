@@ -35,22 +35,16 @@ var configurationFields = []field.SchemaField{
 
 var configRelations = []field.SchemaFieldRelationship{
 	field.FieldsMutuallyExclusive(domainField, urlField),
+	field.FieldsAtLeastOneUsed(domainField, urlField),
 }
+
+var configuration = field.NewConfiguration(configurationFields, configRelations...)
 
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
 func validateConfig(ctx context.Context, v *viper.Viper) error {
 	l := ctxzap.Extract(ctx)
 
-	domain := v.GetString(domainField.FieldName)
 	urlstr := v.GetString(urlField.FieldName)
-	if domain == "" && urlstr == "" {
-		return fmt.Errorf("domain or url is required")
-	}
-
-	if domain != "" && urlstr != "" {
-		return fmt.Errorf("only one of domain or url is allowed")
-	}
-
 	if urlstr != "" {
 		_, err := url.Parse(urlstr)
 		if err != nil {
