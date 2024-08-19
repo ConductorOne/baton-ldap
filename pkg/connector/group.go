@@ -129,6 +129,22 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 	return rv, "", nil, nil
 }
 
+func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
+	g := grant.NewGrant(
+		// remove group profile from grant so we're not saving all group memberships in every grant
+		&v2.Resource{
+			Id: resource.Id,
+		},
+		groupMemberEntitlement,
+		// remove user profile from grant so we're not saving repetitive user info in every grant
+		&v2.ResourceId{
+			ResourceType: resourceTypeUser.Id,
+			Resource:     userDN,
+		},
+	)
+	return g
+}
+
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -197,52 +213,30 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		var memberEntry []*ldap.Entry
 
 		if parsedDN, err := ldap3.ParseDN(memberId); err == nil {
-			memberEntry, _, err = g.client.LdapSearch(
-				ctx,
-				"",
-				nil,
-				"",
-				1,
-				parsedDN.String(),
-			)
-			if err != nil {
-				// TODO: collect errors
-				l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.String("parseDN", parsedDN.String()), zap.Error(err))
-			}
-		} else {
-			// Group member doesn't look like it is a DN, search for it as a UID
-			memberEntry, _, err = g.client.LdapSearch(
-				ctx,
-				fmt.Sprintf(groupMemberFilter, memberId),
-				nil,
-				"",
-				1,
-				"",
-			)
-			if err != nil {
-				// TODO: collect errors
-				l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.Error(err))
-			}
+			g := newGrantFromDN(resource, parsedDN.String())
+			rv = append(rv, g)
+			continue
 		}
 
+		// Group member doesn't look like it is a DN, search for it as a UID
+		memberEntry, _, err = g.client.LdapSearch(
+			ctx,
+			fmt.Sprintf(groupMemberFilter, memberId),
+			nil,
+			"",
+			1,
+			"",
+		)
+		if err != nil {
+			// TODO: collect errors
+			l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.Error(err))
+		}
 		if len(memberEntry) == 0 {
 			l.Error("ldap-connector: failed to find user with dn or UID", zap.String("member_id", memberId))
 		}
 
 		for _, e := range memberEntry {
-			g := grant.NewGrant(
-				// remove group profile from grant so we're not saving all group memberships in every grant
-				&v2.Resource{
-					Id: resource.Id,
-				},
-				groupMemberEntitlement,
-				// remove user profile from grant so we're not saving repetitive user info in every grant
-				&v2.ResourceId{
-					ResourceType: resourceTypeUser.Id,
-					Resource:     e.DN,
-				},
-			)
-
+			g := newGrantFromDN(resource, e.DN)
 			rv = append(rv, g)
 		}
 	}
