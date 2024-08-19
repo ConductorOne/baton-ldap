@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.22.3
 
 require (
-	github.com/conductorone/baton-sdk v0.2.8
+	github.com/conductorone/baton-sdk v0.2.20
 	github.com/go-ldap/ldap/v3 v3.4.5
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.1
@@ -15,6 +15,7 @@ require (
 )
 
 require (
+	github.com/allegro/bigcache/v3 v3.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect

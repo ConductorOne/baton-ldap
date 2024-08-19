@@ -79,6 +79,9 @@ func MakeMainCommand(
 					v.GetString("client-secret"),
 				),
 			)
+			if v.GetBool("skip-full-sync") {
+				opts = append(opts, connectorrunner.WithFullSyncDisabled())
+			}
 		} else {
 			switch {
 			case v.GetString("grant-entitlement") != "":
@@ -148,6 +151,7 @@ func MakeMainCommand(
 			opts = append(opts, connectorrunner.WithTempDir(v.GetString("c1z-temp-dir")))
 		}
 
+		// NOTE(shackra): top-most in the execution flow for connectors
 		r, err := connectorrunner.NewConnectorRunner(runCtx, c, opts...)
 		if err != nil {
 			l.Error("error creating connector runner", zap.Error(err))
@@ -201,6 +205,10 @@ func MakeGRPCServerCommand(
 
 		if v.GetBool("ticketing") {
 			copts = append(copts, connector.WithTicketingEnabled())
+		}
+
+		if v.GetBool("skip-full-sync") {
+			copts = append(copts, connector.WithFullSyncDisabled())
 		}
 
 		switch {
