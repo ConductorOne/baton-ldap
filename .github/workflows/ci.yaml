@@ -87,7 +87,7 @@ jobs:
       - name: Create ldif files
         run: node ./scripts/ldif.js && ls -la
       - name: Import ldif into openldap
-        run: ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00000.ldif && ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00001.ldif && ldapadd -D 'CN=admin,DC=example,DC=org' -N -x -H 'ldap://localhost:389/' -w admin -f big-00002.ldif
+        run: ./scripts/import.sh
       - name: Build baton-ldap
         run: go build ./cmd/baton-ldap
       - name: Run baton-ldap
