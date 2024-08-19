@@ -129,6 +129,7 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 	return rv, "", nil, nil
 }
 
+// newGrantFromDN - create a `Grant` from a given group and user distinguished name.
 func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
 	g := grant.NewGrant(
 		// remove group profile from grant so we're not saving all group memberships in every grant
