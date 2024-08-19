@@ -8,18 +8,21 @@ const fs = require('node:fs');
 const userCount = 1000;
 const groupCount = 50;
 const maxFileSize = 2000000; // php ldap admin has a 2MB limit
+const usersPerGroup = 100;
 
 let fileSize = 0;
 let fileCount = 0;
 const baseFileName = "big-";
 
-let f;
+let f = null;
 // Only pass strings that constitute full objects to write().
 // Otherwise the object will span across multiple files and import will fail.
 function write (data, opts = {}) {
   fileSize += data.length;
   if (fileSize > maxFileSize) {
-    fs.closeSync(f);
+    if (f) {
+      fs.closeSync(f);
+    }
     fileSize = data.length;
     fileCount++;
     f = null;
@@ -56,7 +59,7 @@ cn: testgroup${groupIdStr}
 gidNumber: ${groupId}
 `;
 
-  for (let userId = 0; userId < userCount; userId++) {
+  for (let userId = 0; userId < usersPerGroup; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
     groupStr += `memberUid: testuser${userIdStr}@example.com
 `;
@@ -75,7 +78,7 @@ cn: othertestgroup${groupIdStr}
 owner: cn=testuser00000@example.com,dc=example,dc=org
 `;
 
-  for (let userId = 0; userId < userCount; userId++) {
+  for (let userId = 0; userId < usersPerGroup; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
     groupStr += `uniquemember: cn=testuser${userIdStr}@example.com,dc=example,dc=org
 `;
