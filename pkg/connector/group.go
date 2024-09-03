@@ -187,7 +187,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			nil,
 			page,
 			uint32(ResourcesPageSize),
-			"",
+			resource.Id.Resource,
 		)
 	}
 
