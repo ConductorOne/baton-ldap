@@ -49,6 +49,25 @@ objectclass: organization
 `);
 */
 
+// Duplicate Posix groups
+for (let groupId = 0; groupId < 2; groupId++) {
+  const groupIdStr = ("0000" + groupId).slice(-5);
+  let groupStr = `dn: cn=testgroup${groupIdStr}duplicate,dc=example,dc=org
+objectClass: top
+objectClass: posixGroup
+cn: testgroup${groupIdStr}
+gidNumber: ${groupId}
+`;
+
+  for (let userId = 0; userId < usersPerGroup; userId++) {
+    const userIdStr = ("00000" + userId).slice(-5);
+    groupStr += `memberUid: testuser${userIdStr}@example.com
+`;
+  }
+
+  write(groupStr + "\n");
+}
+
 // Posix groups
 for (let groupId = 0; groupId < groupCount; groupId++) {
   const groupIdStr = ("0000" + groupId).slice(-5);
