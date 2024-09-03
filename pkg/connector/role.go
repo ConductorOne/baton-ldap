@@ -72,7 +72,7 @@ func (r *roleResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 		roleFilter,
 		nil,
 		page,
-		uint32(ResourcesPageSize),
+		ResourcesPageSize,
 		"",
 	)
 	if err != nil {

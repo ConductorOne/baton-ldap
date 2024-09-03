@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-var ResourcesPageSize = 50
+var ResourcesPageSize uint32 = 50
 
 func annotationsForUserResourceType() annotations.Annotations {
 	annos := annotations.Annotations{}
