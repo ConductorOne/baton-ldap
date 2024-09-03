@@ -83,7 +83,7 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 		groupFilter,
 		nil,
 		page,
-		uint32(ResourcesPageSize),
+		ResourcesPageSize,
 		"",
 	)
 	if err != nil {
@@ -176,7 +176,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			groupFilter,
 			nil,
 			"",
-			uint32(ResourcesPageSize),
+			ResourcesPageSize,
 			resource.Id.Resource,
 		)
 	} else {
@@ -186,7 +186,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			query,
 			nil,
 			page,
-			uint32(ResourcesPageSize),
+			ResourcesPageSize,
 			resource.Id.Resource,
 		)
 	}
@@ -251,7 +251,7 @@ func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap
 		groupFilter,
 		nil,
 		"",
-		uint32(ResourcesPageSize),
+		ResourcesPageSize,
 		groupDN,
 	)
 	if err != nil {

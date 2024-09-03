@@ -187,7 +187,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 		userFilter,
 		attrs,
 		page,
-		uint32(ResourcesPageSize),
+		ResourcesPageSize,
 		"",
 	)
 	if err != nil {
