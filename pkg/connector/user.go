@@ -29,8 +29,11 @@ const (
 	attrUserDisplayName   = "displayName"
 	attrUserCreatedAt     = "createTimestamp"
 	attrUserAuthTimestamp = "authTimestamp"
+	attrObjectGUID        = "objectGUID"
 
 	// Microsoft active directory specific attribute.
+	attrsAMAccountName     = "sAMAccountName"
+	attrUserPrincipalName  = "userPrincipalName"
 	attrUserAccountControl = "userAccountControl"
 	attrUserLastLogon      = "lastLogonTimestamp"
 )
@@ -86,6 +89,33 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 	return userStatus, nil
 }
 
+func parseUserLogin(user *ldap.Entry) (string, []string) {
+	login := ""
+	aliases := []string{}
+
+	sAMAccountName := user.GetAttributeValue(attrsAMAccountName)
+	uid := user.GetAttributeValue(attrUserUID)
+	cn := user.GetAttributeValue(attrUserCommonName)
+	principalName := user.GetAttributeValue(attrUserPrincipalName)
+	guid := user.GetAttributeValue(attrObjectGUID)
+
+	for _, attr := range []string{sAMAccountName, uid, cn, principalName, guid} {
+		if attr == "" {
+			continue
+		}
+		if login == "" {
+			login = attr
+			continue
+		}
+		if attr == login {
+			continue
+		}
+		aliases = append(aliases, attr)
+	}
+
+	return login, aliases
+}
+
 func parseUserLastLogin(lastLoginStr string) (*time.Time, error) {
 	lastLoginTime, err := time.Parse("20060102150405Z0700", lastLoginStr)
 	if err == nil {
@@ -119,6 +149,12 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		"path":       user.DN,
 	}
 
+	for _, v := range user.Attributes {
+		if len(v.Values) == 1 {
+			profile[v.Name] = v.Values[0]
+		}
+	}
+
 	userStatus, err := parseUserStatus(user)
 	if err != nil {
 		return nil, err
@@ -131,9 +167,16 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
-		rs.WithUserProfile(profile),
 		rs.WithStatus(userStatus),
 	}
+
+	login, aliases := parseUserLogin(user)
+	if login != "" {
+		userTraitOptions = append(userTraitOptions, rs.WithUserLogin(login, aliases...))
+		profile["login"] = login
+	}
+
+	userTraitOptions = append(userTraitOptions, rs.WithUserProfile(profile))
 
 	createdAt := user.GetAttributeValue(attrUserCreatedAt)
 	createTime, err := time.Parse("20060102150405Z0700", createdAt)
