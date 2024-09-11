@@ -97,6 +97,29 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 	return nil
 }
 
+func parsePageToken(pageToken string) (string, []byte, error) {
+	if pageToken == "" {
+		return "", nil, nil
+	}
+	parts := strings.SplitN(pageToken, ":", 2)
+	if len(parts) != 2 {
+		return "", nil, fmt.Errorf("invalid page token")
+	}
+	decodedToken, err := base64.StdEncoding.DecodeString(parts[1])
+	return parts[0], decodedToken, err
+}
+
+var requestId = 0
+
+func encodePageToken(cookie []byte) string {
+	if len(cookie) == 0 {
+		return ""
+	}
+	requestId++
+	requestId %= 100
+	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
+}
+
 func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []string, pageToken string, pageSize uint32, baseDNOverride string) ([]*ldap.Entry, string, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -112,7 +135,7 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 
 		pagingControl := ldap.NewControlPaging(pageSize)
 		if pageToken != "" {
-			decodedToken, err := base64.StdEncoding.DecodeString(pageToken)
+			_, decodedToken, err := parsePageToken(pageToken)
 			if err != nil {
 				return err
 			}
@@ -154,7 +177,7 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 
 		resultPc := ldap.FindControl(resp.Controls, ldap.ControlTypePaging)
 		if pc, ok := resultPc.(*ldap.ControlPaging); ok {
-			nextPageToken = base64.StdEncoding.EncodeToString(pc.Cookie)
+			nextPageToken = encodePageToken(pc.Cookie)
 		}
 		return nil
 	})
