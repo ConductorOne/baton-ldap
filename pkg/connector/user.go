@@ -135,6 +135,15 @@ func parseUserLastLogin(lastLoginStr string) (*time.Time, error) {
 	return &lastLoginTime, nil
 }
 
+func containsBinaryData(value string) bool {
+	for _, c := range value {
+		if c < 32 || c > 126 {
+			return true
+		}
+	}
+	return false
+}
+
 // Create a new connector resource for an LDAP User.
 func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	l := ctxzap.Extract(ctx)
@@ -150,7 +159,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	for _, v := range user.Attributes {
-		if len(v.Values) == 1 {
+		if len(v.Values) == 1 && !containsBinaryData(v.Values[0]) {
 			profile[v.Name] = v.Values[0]
 		}
 	}
