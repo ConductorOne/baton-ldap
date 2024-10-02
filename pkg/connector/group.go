@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	groupFilter       = "(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup))"
-	groupIdFilter     = "(&(gidNumber=%s)(|(objectClass=groupOfUniqueNames)(objectClass=posixGroup)))"
-	groupMemberFilter = "(&(objectClass=posixAccount)(uid=%s))"
+	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)"
+	groupFilter        = "(|" + groupObjectClasses + ")"
+	groupIdFilter      = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
+	groupMemberFilter  = "(&(objectClass=posixAccount)(uid=%s))"
 
 	attrGroupCommonName  = "cn"
 	attrGroupIdPosix     = "gidNumber"
@@ -29,6 +30,7 @@ const (
 	attrGroupMemberPosix = "memberUid"
 	attrGroupDescription = "description"
 
+	// TODO: use user "memberOf" attribute to get group membership?
 	groupMemberEntitlement = "member"
 )
 

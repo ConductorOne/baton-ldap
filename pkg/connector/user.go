@@ -12,6 +12,7 @@ import (
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 )
@@ -19,8 +20,7 @@ import (
 // InetOrgPerson resource structure
 // https://datatracker.ietf.org/doc/html/rfc2798
 const (
-	userFilter = "(objectClass=inetOrgPerson)"
-
+	userFilter            = "(|(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson))"
 	attrUserUID           = "uid"
 	attrUserCommonName    = "cn"
 	attrFirstName         = "givenName"
@@ -168,6 +168,16 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
 		rs.WithStatus(userStatus),
+	}
+
+	objectClasses := user.GetAttributeValues("objectClass")
+	switch {
+	case slices.Contains(objectClasses, "computer"):
+		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_SERVICE))
+	case slices.Contains(objectClasses, "person"):
+		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_HUMAN))
+	default:
+		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_UNSPECIFIED))
 	}
 
 	login, aliases := parseUserLogin(user)
