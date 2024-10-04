@@ -100,7 +100,7 @@ func parseUserLogin(user *ldap.Entry) (string, []string) {
 	guid := user.GetAttributeValue(attrObjectGUID)
 
 	for _, attr := range []string{sAMAccountName, uid, cn, principalName, guid} {
-		if attr == "" {
+		if attr == "" || containsBinaryData(attr) {
 			continue
 		}
 		if login == "" {
