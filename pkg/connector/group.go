@@ -24,11 +24,12 @@ const (
 	groupIdFilter      = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
 	groupMemberFilter  = "(&(objectClass=posixAccount)(uid=%s))"
 
-	attrGroupCommonName  = "cn"
-	attrGroupIdPosix     = "gidNumber"
-	attrGroupMember      = "uniqueMember"
-	attrGroupMemberPosix = "memberUid"
-	attrGroupDescription = "description"
+	attrGroupCommonName   = "cn"
+	attrGroupIdPosix      = "gidNumber"
+	attrGroupMember       = "member"
+	attrGroupUniqueMember = "uniqueMember"
+	attrGroupMemberPosix  = "memberUid"
+	attrGroupDescription  = "description"
 
 	// TODO: use user "memberOf" attribute to get group membership?
 	groupMemberEntitlement = "member"
@@ -208,7 +209,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	memberIDs := parseValues(ldapGroup[0], []string{attrGroupMember, attrGroupMemberPosix})
+	memberIDs := parseValues(ldapGroup[0], []string{attrGroupUniqueMember, attrGroupMember, attrGroupMemberPosix})
 
 	// create membership grants
 	var rv []*v2.Grant
@@ -297,7 +298,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		modifyRequest.Add(attrGroupMemberPosix, username)
 	} else {
 		principalDNArr := []string{principal.Id.Resource}
-		modifyRequest.Add(attrGroupMember, principalDNArr)
+		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
 	}
 
 	// grant group membership to the principal
@@ -329,6 +330,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		return nil, err
 	}
 
+	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
 	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
 		dn, err := ldap3.ParseDN(principal.Id.Resource)
 		if err != nil {
@@ -338,7 +340,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		modifyRequest.Delete(attrGroupMemberPosix, username)
 	} else {
 		principalDNArr := []string{principal.Id.Resource}
-		modifyRequest.Delete(attrGroupMember, principalDNArr)
+		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
 	}
 
 	// revoke group membership from the principal
