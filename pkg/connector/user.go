@@ -10,6 +10,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -43,6 +44,7 @@ var allAttrs = []string{"*", "+"}
 type userResourceType struct {
 	resourceType            *v2.ResourceType
 	client                  *ldap.Client
+	userSearchDN            *ldap3.DN
 	disableOperationalAttrs bool
 }
 
@@ -246,11 +248,12 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 
 	userEntries, nextPage, err := u.client.LdapSearch(
 		ctx,
+		ldap3.ScopeWholeSubtree,
+		u.userSearchDN,
 		userFilter,
 		attrs,
 		page,
 		ResourcesPageSize,
-		"",
 	)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list users: %w", err)
@@ -284,9 +287,10 @@ func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 	return nil, "", nil, nil
 }
 
-func userBuilder(client *ldap.Client, disableOperationalAttrs bool) *userResourceType {
+func userBuilder(client *ldap.Client, userSearchDN *ldap3.DN, disableOperationalAttrs bool) *userResourceType {
 	return &userResourceType{
 		resourceType:            resourceTypeUser,
+		userSearchDN:            userSearchDN,
 		client:                  client,
 		disableOperationalAttrs: disableOperationalAttrs,
 	}

@@ -11,6 +11,7 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+
 	ldap3 "github.com/go-ldap/ldap/v3"
 )
 
@@ -27,6 +28,7 @@ const (
 type roleResourceType struct {
 	resourceType *v2.ResourceType
 	client       *ldap.Client
+	roleSearchDN *ldap3.DN
 }
 
 func (r *roleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -69,11 +71,12 @@ func (r *roleResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 
 	roleEntries, nextPage, err := r.client.LdapSearch(
 		ctx,
+		ldap3.ScopeWholeSubtree,
+		r.roleSearchDN,
 		roleFilter,
 		nil,
 		page,
 		ResourcesPageSize,
-		"",
 	)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list roles: %w", err)
@@ -132,34 +135,21 @@ func (r *roleResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 	// create membership grants
 	var rv []*v2.Grant
 	for _, dn := range memberDNStrings {
-		memberEntry, _, err := r.client.LdapSearch(
-			ctx,
-			"",
-			nil,
-			"",
-			1,
-			dn,
-		)
+		dnx, err := ldap3.ParseDN(dn)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("ldap-connector: failed to get user with dn %s: %w", dn, err)
+			return nil, "", nil, fmt.Errorf("ldap-connector: invalid DN in role_members: '%s': %w", dn, err)
 		}
 
-		if len(memberEntry) == 0 {
+		urId, err := rs.NewResourceID(resourceTypeUser, dnx.String())
+		if err != nil {
 			return nil, "", nil, fmt.Errorf("ldap-connector: failed to find user with dn %s", dn)
 		}
-
-		memberCopy := memberEntry
-		ur, err := userResource(ctx, memberCopy[0])
-		if err != nil {
-			return nil, "", nil, err
-		}
-
 		rv = append(
 			rv,
 			grant.NewGrant(
 				resource,
 				roleMemberEntitlement,
-				ur.Id,
+				urId,
 			),
 		)
 	}
@@ -174,19 +164,12 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 
 	roleDN := entitlement.Resource.Id.Resource
 
-	// This checks to see if the user exists in LDAP.
-	// TODO: We could probably skip this step, since we already have the principal
-	_, err := r.client.CreateMemberEntry(ctx, principal.Id.Resource)
-	if err != nil {
-		return nil, err
-	}
-
 	principalDNArr := []string{principal.Id.Resource}
 	modifyRequest := ldap3.NewModifyRequest(roleDN, nil)
 	modifyRequest.Add(attrRoleMember, principalDNArr)
 
 	// grant role memberships to the principal
-	err = r.client.LdapModify(
+	err := r.client.LdapModify(
 		ctx,
 		modifyRequest,
 	)
@@ -223,9 +206,10 @@ func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	return nil, nil
 }
 
-func roleBuilder(client *ldap.Client) *roleResourceType {
+func roleBuilder(client *ldap.Client, roleSearchDN *ldap3.DN) *roleResourceType {
 	return &roleResourceType{
 		resourceType: resourceTypeRole,
 		client:       client,
+		roleSearchDN: roleSearchDN,
 	}
 }

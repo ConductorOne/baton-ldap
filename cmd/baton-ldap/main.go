@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/conductorone/baton-ldap/pkg/config"
 	"github.com/conductorone/baton-ldap/pkg/connector"
 	configschema "github.com/conductorone/baton-sdk/pkg/config"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
@@ -19,7 +20,7 @@ var version = "dev"
 func main() {
 	ctx := context.Background()
 
-	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, configuration)
+	_, cmd, err := configschema.DefineConfiguration(ctx, "baton-ldap", getConnector, config.Configuration)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -37,22 +38,14 @@ func main() {
 func getConnector(ctx context.Context, v *viper.Viper) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
 
-	if err := validateConfig(ctx, v); err != nil {
+	cf, err := config.New(ctx, v)
+	if err != nil {
 		return nil, err
-	}
-
-	if v.GetString(urlField.FieldName) == "" && v.GetString(domainField.FieldName) != "" {
-		v.Set(urlField.FieldName, fmt.Sprintf("ldap://%s", v.GetString(domainField.FieldName)))
 	}
 
 	ldapConnector, err := connector.New(
 		ctx,
-		v.GetString(urlField.FieldName),
-		v.GetString(baseDNField.FieldName),
-		v.GetString(passwordField.FieldName),
-		v.GetString(userDNField.FieldName),
-		v.GetBool(disableOperationalAttrsField.FieldName),
-		v.GetBool(insecureSkipVerifyField.FieldName),
+		cf,
 	)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
