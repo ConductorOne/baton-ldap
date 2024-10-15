@@ -1,0 +1,41 @@
+# simple ldif file for testing
+version: 1
+
+dn: ou=groups,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: groups
+
+dn: cn=staff,ou=groups,dc=example,dc=org
+cn: staff
+gidnumber: 500
+objectclass: posixGroup
+objectclass: top
+
+dn: cn=test,ou=groups,dc=example,dc=org
+cn: test
+gidnumber: 501
+memberUid: roger
+objectclass: posixGroup
+objectclass: top
+
+# Entry 5: ou=users,dc=example,dc=org
+# dn: ou=users,dc=example,dc=org
+# objectclass: organizationalUnit
+# objectclass: top
+# ou: users
+
+# Entry 6: cn=roger,ou=users,dc=example,dc=org
+dn: cn=roger,ou=users,dc=example,dc=org
+cn: roger
+gidnumber: 500
+givenname: Roger Rabbit
+homedirectory: /home/roger
+loginshell: /bin/bash
+objectclass: inetOrgPerson
+objectclass: posixAccount
+objectclass: top
+sn: Rabbit
+uid: roger
+uidnumber: 1000
+userpassword: {CRYPT}$6$Sy1sX75G$/.nlmUpTeW7REXKsdXjRZVXitOrFPk5uEvGs/eC8cXiD0WHlNBT33DDlHlgkP.eiOM5t6VrF1iDj8kYUMPwkT0

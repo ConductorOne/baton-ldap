@@ -2,7 +2,9 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -31,13 +33,17 @@ const (
 	attrGroupMemberPosix  = "memberUid"
 	attrGroupDescription  = "description"
 
-	// TODO: use user "memberOf" attribute to get group membership?
 	groupMemberEntitlement = "member"
 )
 
 type groupResourceType struct {
-	resourceType *v2.ResourceType
-	client       *ldap.Client
+	resourceType  *v2.ResourceType
+	groupSearchDN *ldap3.DN
+	userSearchDN  *ldap3.DN
+	client        *ldap.Client
+
+	uid2dnCache map[string]string
+	uid2dnMtx   sync.Mutex
 }
 
 func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -83,14 +89,15 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 
 	groupEntries, nextPage, err := g.client.LdapSearch(
 		ctx,
+		ldap3.ScopeWholeSubtree,
+		g.groupSearchDN,
 		groupFilter,
 		nil,
 		page,
 		ResourcesPageSize,
-		"",
 	)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list groups: %w", err)
+		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list groups in '%s': %w", g.groupSearchDN.String(), err)
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
@@ -100,9 +107,7 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 
 	var rv []*v2.Resource
 	for _, groupEntry := range groupEntries {
-		groupEntryCopy := groupEntry
-
-		gr, err := groupResource(ctx, groupEntryCopy)
+		gr, err := groupResource(ctx, groupEntry)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -152,6 +157,11 @@ func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
+	groupDN, err := ldap3.ParseDN(resource.Id.Resource)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("ldap-connector: invalid group DN: '%s' in group grants: %w", resource.Id.Resource, err)
+	}
+
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
 		return nil, "", nil, err
@@ -176,21 +186,23 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	if groupId == "" {
 		ldapGroup, nextPage, err = g.client.LdapSearch(
 			ctx,
+			ldap3.ScopeBaseObject,
+			groupDN,
 			groupFilter,
 			nil,
 			"",
 			ResourcesPageSize,
-			resource.Id.Resource,
 		)
 	} else {
 		query := fmt.Sprintf(groupIdFilter, groupId)
 		ldapGroup, nextPage, err = g.client.LdapSearch(
 			ctx,
+			ldap3.ScopeBaseObject,
+			groupDN,
 			query,
 			nil,
 			page,
 			ResourcesPageSize,
-			resource.Id.Resource,
 		)
 	}
 
@@ -222,15 +234,26 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			continue
 		}
 
+		g.uid2dnMtx.Lock()
+		if dn, ok := g.uid2dnCache[memberId]; ok {
+			g.uid2dnMtx.Unlock()
+			g := newGrantFromDN(resource, dn)
+			rv = append(rv, g)
+			continue
+		}
+		g.uid2dnMtx.Unlock()
+
 		// Group member doesn't look like it is a DN, search for it as a UID
 		memberEntry, _, err = g.client.LdapSearch(
 			ctx,
+			ldap3.ScopeWholeSubtree,
+			g.userSearchDN,
 			fmt.Sprintf(groupMemberFilter, memberId),
 			nil,
 			"",
 			1,
-			"",
 		)
+
 		if err != nil {
 			// TODO: collect errors
 			l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.Error(err))
@@ -238,6 +261,12 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		if len(memberEntry) == 0 {
 			l.Error("ldap-connector: failed to find user with dn or UID", zap.String("member_id", memberId))
 		}
+
+		g.uid2dnMtx.Lock()
+		if len(memberEntry) == 1 {
+			g.uid2dnCache[memberId] = memberEntry[0].DN
+		}
+		g.uid2dnMtx.Unlock()
 
 		for _, e := range memberEntry {
 			g := newGrantFromDN(resource, e.DN)
@@ -249,14 +278,21 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 }
 
 func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap3.Entry, error) {
+	gdn, err := ldap3.ParseDN(groupDN)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: invalid group DN: '%s' in getGroup: %w", groupDN, err)
+	}
+
 	groupEntries, _, err := g.client.LdapSearch(
 		ctx,
+		ldap3.ScopeBaseObject,
+		gdn,
 		groupFilter,
 		nil,
 		"",
 		ResourcesPageSize,
-		groupDN,
 	)
+
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to get group: %w", err)
 	}
@@ -274,13 +310,6 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	}
 
 	groupDN := entitlement.Resource.Id.Resource
-
-	// This checks to see if the user exists in LDAP.
-	// TODO: We could probably skip this step, since we already have the principal
-	_, err := g.client.CreateMemberEntry(ctx, principal.Id.Resource)
-	if err != nil {
-		return nil, err
-	}
 
 	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
 
@@ -349,15 +378,25 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		modifyRequest,
 	)
 	if err != nil {
+		var lerr *ldap3.Error
+		if errors.As(err, &lerr) {
+			if lerr.ResultCode == ldap3.LDAPResultNoSuchAttribute {
+				return nil, nil
+			}
+		}
 		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership from user: %w", err)
 	}
 
 	return nil, nil
 }
 
-func groupBuilder(client *ldap.Client) *groupResourceType {
+func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
+	userSearchDN *ldap3.DN) *groupResourceType {
 	return &groupResourceType{
-		resourceType: resourceTypeGroup,
-		client:       client,
+		groupSearchDN: groupSearchDN,
+		userSearchDN:  userSearchDN,
+		resourceType:  resourceTypeGroup,
+		client:        client,
+		uid2dnCache:   make(map[string]string),
 	}
 }

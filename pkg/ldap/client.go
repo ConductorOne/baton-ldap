@@ -16,7 +16,6 @@ import (
 
 type ldapConn struct {
 	conn               *ldap.Conn
-	baseDN             string
 	insecureSkipVerify bool
 }
 
@@ -120,7 +119,12 @@ func encodePageToken(cookie []byte) string {
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
 }
 
-func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []string, pageToken string, pageSize uint32, baseDNOverride string) ([]*ldap.Entry, string, error) {
+func (c *Client) LdapSearch(ctx context.Context,
+	searchScope int,
+	searchDN *ldap.DN,
+	filter string,
+	attrNames []string,
+	pageToken string, pageSize uint32) ([]*ldap.Entry, string, error) {
 	l := ctxzap.Extract(ctx)
 
 	var ret []*ldap.Entry
@@ -145,24 +149,20 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 		if len(attrNames) == 0 {
 			attrNames = []string{"*"}
 		}
-		scope := ldap.ScopeBaseObject
-
-		// This function gets called on retries, so don't change the value of args, otherwise we don't set scope
-		baseDN := baseDNOverride
-		if baseDN == "" {
-			baseDN = client.baseDN
-			scope = ldap.ScopeWholeSubtree
-		}
 
 		if filter == "" {
 			filter = "(objectClass=*)"
 		}
+		var baseDN string
+		if searchDN != nil {
+			baseDN = searchDN.String()
+		}
 
-		l.Debug("searching for ldap entries", zap.String("baseDN", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
+		l.Debug("searching for ldap entries", zap.String("search_dn", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
 			BaseDN:       baseDN,
-			Scope:        scope,
+			Scope:        searchScope,
 			DerefAliases: ldap.DerefAlways,
 			Filter:       filter,
 			Attributes:   attrNames,
@@ -187,25 +187,6 @@ func (c *Client) LdapSearch(ctx context.Context, filter string, attrNames []stri
 	}
 
 	return ret, nextPageToken, nil
-}
-
-func (c *Client) CreateMemberEntry(ctx context.Context, memberId string) (string, error) {
-	memberEntry, _, err := c.LdapSearch(
-		ctx,
-		"",
-		nil,
-		"",
-		1,
-		memberId,
-	)
-	if err != nil {
-		return "", fmt.Errorf("ldap-connector: failed to get user with id %s: %w", memberId, err)
-	}
-	if len(memberEntry) == 0 {
-		return "", fmt.Errorf("ldap-connector: no user with id %s found", memberId)
-	}
-
-	return memberEntry[0].DN, nil
 }
 
 func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
@@ -258,7 +239,7 @@ func getConnection(ctx context.Context, serverUrl string, password string, userD
 	return conn, nil
 }
 
-func NewClient(ctx context.Context, serverUrl string, baseDN string, password string, userDN string, insecureSkipVerify bool) (*Client, error) {
+func NewClient(ctx context.Context, serverUrl string, password string, userDN string, insecureSkipVerify bool) (*Client, error) {
 	_, err := getConnection(ctx, serverUrl, password, userDN, insecureSkipVerify)
 	if err != nil {
 		return nil, err
@@ -272,7 +253,6 @@ func NewClient(ctx context.Context, serverUrl string, baseDN string, password st
 
 		return &ldapConn{
 			conn:               conn,
-			baseDN:             baseDN,
 			insecureSkipVerify: insecureSkipVerify,
 		}, nil
 	}
