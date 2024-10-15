@@ -32,10 +32,10 @@ var (
 
 var (
 	// depreciated: use urlField
-	domainField = field.StringField("domain", field.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com (depreciated, use url"`), field.WithHidden(true))
+	domainField = field.StringField("domain", field.WithDescription(`The fully-qualified LDAP domain to connect to. Example: "baton.example.com" (deprecated, use url`), field.WithHidden(true))
 
 	// depreciated: use userBindDNField
-	userDNField = field.StringField("user-dn", field.WithDescription("The user DN to bind to the LDAP server (depreciated, use user-bind-dn)"), field.WithHidden(true))
+	userDNField = field.StringField("user-dn", field.WithDescription("The user DN to bind to the LDAP server (deprecated, use user-bind-dn)"), field.WithHidden(true))
 )
 
 // configurationFields defines the external configuration required for the connector to run.
