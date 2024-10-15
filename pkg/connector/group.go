@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -40,6 +41,9 @@ type groupResourceType struct {
 	groupSearchDN *ldap3.DN
 	userSearchDN  *ldap3.DN
 	client        *ldap.Client
+
+	uid2dnCache map[string]string
+	uid2dnMtx   sync.Mutex
 }
 
 func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -230,6 +234,15 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			continue
 		}
 
+		g.uid2dnMtx.Lock()
+		if dn, ok := g.uid2dnCache[memberId]; ok {
+			g.uid2dnMtx.Unlock()
+			g := newGrantFromDN(resource, dn)
+			rv = append(rv, g)
+			continue
+		}
+		g.uid2dnMtx.Unlock()
+
 		// Group member doesn't look like it is a DN, search for it as a UID
 		memberEntry, _, err = g.client.LdapSearch(
 			ctx,
@@ -248,6 +261,12 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		if len(memberEntry) == 0 {
 			l.Error("ldap-connector: failed to find user with dn or UID", zap.String("member_id", memberId))
 		}
+
+		g.uid2dnMtx.Lock()
+		if len(memberEntry) == 1 {
+			g.uid2dnCache[memberId] = memberEntry[0].DN
+		}
+		g.uid2dnMtx.Unlock()
 
 		for _, e := range memberEntry {
 			g := newGrantFromDN(resource, e.DN)
@@ -378,5 +397,6 @@ func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
 		userSearchDN:  userSearchDN,
 		resourceType:  resourceTypeGroup,
 		client:        client,
+		uid2dnCache:   make(map[string]string),
 	}
 }
