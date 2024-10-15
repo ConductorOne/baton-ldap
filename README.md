@@ -42,6 +42,8 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 | `--group-search-dn` | `BATON_GROUP_SEARCH_DN` |  **optional**  Distinguished name to search for User objects in.  If unset the Base DN is used. |
 | `--provisioning` | `BATON_PROVISIONING` |  **optional** Enable Provisioning of Groups by `baton-ldap`. `true` or `false`.  Defaults to `false` |
 
+Use `baton-ldap --help` to see all configuration flags and environment variables.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose
@@ -78,37 +80,3 @@ After successfully syncing data, use the baton CLI to list the resources and see
 We started Baton because we were tired of taking screenshots and manually building spreadsheets. We welcome contributions, and ideas, no matter how small -- our goal is to make identity and permissions sprawl less painful for everyone. If you have questions, problems, or ideas: Please open a Github Issue!
 
 See [CONTRIBUTING.md](https://github.com/ConductorOne/baton/blob/main/CONTRIBUTING.md) for more details.
-
-# `baton-ldap` Command Line Usage
-
-```
-baton-ldap
-
-Usage:
-  baton-ldap [flags]
-  baton-ldap [command]
-
-Available Commands:
-  completion         Generate the autocompletion script for the specified shell
-  help               Help about any command
-
-Flags:
-      --base-dn string                The base DN used to specify where in the tree to sync resources under. ($BATON_BASE_DN)
-      --client-id string              The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
-      --client-secret string          The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
-      --domain                        The domain of the LDAP url. ($BATON_DOMAIN)
-  -f, --file string                   The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
-      --grant-entitlement string      The entitlement to grant to the supplied principal ($BATON_GRANT_ENTITLEMENT)
-      --grant-principal string        The resource to grant the entitlement to ($BATON_GRANT_PRINCIPAL)
-      --grant-principal-type string   The resource type of the principal to grant the entitlement to ($BATON_GRANT_PRINCIPAL_TYPE)
-  -h, --help                          help for baton-ldap
-      --log-format string             The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
-      --log-level string              The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
-      --password string               The password of the user to bind to. ($BATON_PASSWORD)
-      --revoke-grant string           The grant to revoke ($BATON_REVOKE_GRANT)
-      --user-dn string                The user DN for the user to bind to. i.e. cn=admin,dc=example,dc=org ($BATON_USER_DN)
-  -v, --version                       version for baton-ldap
-
-Use "baton-ldap [command] --help" for more information about a command.
-
-```
