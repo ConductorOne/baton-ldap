@@ -2,94 +2,53 @@
 
 # `baton-ldap` [![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-ldap.svg)](https://pkg.go.dev/github.com/conductorone/baton-ldap) ![main ci](https://github.com/conductorone/baton-ldap/actions/workflows/main.yaml/badge.svg)
 
-`baton-ldap` is a connector for LDAP built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the LDAP API to sync data about roles, users, and groups.
+`baton-ldap` is a connector for LDAP built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the LDAP protocol to sync data about roles, users, and groups.
 
 Check out [Baton](https://github.com/conductorone/baton) to learn more about the project in general.
 
-## LDAP 
+## LDAP
 
 ## Credentials
 
-To access the API, you must provide the username and password you use to login to the LDAP server. 
+To access the LDAP server, you must provide the username and password you use to login to the LDAP server. 
 
 # Getting Started
 
-## brew
+_Also see [Set up an LDAP connector](https://www.conductorone.com/docs/product/integrations/ldap/) in the ConductorOne documentation for instructions including using LDAP from ConductorOne._
 
+## Installing
+
+The latest release is available from the [`baton-ldap` Github releases page](https://github.com/ConductorOne/baton-ldap/releases).
+
+Pre-built container images compatible with Docker and other container runtimes are [published to GHCR](https://github.com/ConductorOne/baton-ldap/pkgs/container/baton-ldap):
+```
+docker pull ghcr.io/conductorone/baton-ldap:latest
+```
+
+Additionally for testing on workstations, `baton-ldap` can be installed from Homebrew:
 ```
 brew install conductorone/baton/baton conductorone/baton/baton-ldap
-
-BATON_PASSWORD=admin_pass BATON_BASE_DN=base_dn BATON_USER_DN=user_dn BATON_DOMAIN=ldap_url baton-ldap
-baton resources
 ```
 
-## docker
+## Common Configuration Options
 
-```
-docker run --rm -v $(pwd):/out -e BATON_TOKEN=token BATON_UNSAFE=true ghcr.io/conductorone/baton-ldap:latest -f "/out/sync.c1z"
-docker run --rm -v $(pwd):/out ghcr.io/conductorone/baton:latest -f "/out/sync.c1z" resources
-```
+| CLI Flag | Environment Variable | Explaination |
+|----------|----------|----------|
+| `--bind-dn` | `BATON_BIND_DN` | **required** Username to bind to the LDAP server with, for example: `cn=baton-service-account,ou=users,dc=baton,dc=example,dc=com` |
+| `--password` | `BATON_PASSWORD` | **optional**  Password to bind to the LDAP server with.  If unset, an unathenticated bind is attempted. |
+| `--url` | `BATON_URL` | **required** URL to the LDAP server. Can be either `ldap:` or `ldaps:` schemes, sets the hostname, and optionally a port number. For example: `ldaps://ldap.example.com:636` |
+| `--base-dn` | `BATON_BASE_DN`   |  **optional** Base Distinguished name to search for LDAP objects in, for example `DC=example,DC=com` |
+| `--user-search-dn` | `BATON_USER_SEARCH_DN` |  **optional**  Distinguished name to search for User objects in.  If unset the Base DN is used. |
+| `--group-search-dn` | `BATON_GROUP_SEARCH_DN` |  **optional**  Distinguished name to search for User objects in.  If unset the Base DN is used. |
 
-## source
+# Developing baton-ldap
 
-```
-go install github.com/conductorone/baton/cmd/baton@main
-go install github.com/conductorone/baton-ldap/cmd/baton-ldap@main
+## How to test with Docker Compose
+You can use [compose.yaml](./compose.yaml) to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server.
 
-BATON_PASSWORD=admin_pass BATON_BASE_DN=base_dn BATON_USER_DN=user_dn BATON_DOMAIN=ldap_url baton-ldap
-baton resources
-```
+Run `docker-compose up` to launch the containers.
 
-## how to test 
-you can use this compose.yaml to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server.
-
-```
-version: '3.7'
-services:
-  openldap:
-    image: osixia/openldap:latest
-    container_name: openldap
-    hostname: openldap
-    ports: 
-      - "389:389"
-      - "636:636"
-    volumes:
-      - ./data/certificates:/container/service/slapd/assets/certs
-      - ./data/slapd/database:/var/lib/ldap
-      - ./data/slapd/config:/etc/ldap/slapd.d
-    environment: 
-      - LDAP_ORGANISATION=example
-      - LDAP_DOMAIN=example.org
-      - LDAP_ADMIN_USERNAME=admin
-      - LDAP_ADMIN_PASSWORD=admin
-      - LDAP_CONFIG_PASSWORD=config_pass
-      - "LDAP_BASE_DN=dc=example,dc=org"
-      - LDAP_REMOVE_CONFIG_AFTER_SETUP=false
-      - DISABLE_CHOWN=true
-    networks:
-      - openldap
-  
-  phpldapadmin:
-    image: osixia/phpldapadmin:latest
-    container_name: phpldapadmin
-    hostname: phpldapadmin
-    ports: 
-      - "80:80"
-    environment: 
-      - PHPLDAPADMIN_LDAP_HOSTS=openldap
-      - PHPLDAPADMIN_HTTPS=false
-    depends_on:
-      - openldap
-    networks:
-      - openldap
-
-networks:
-  openldap:
-    driver: bridge
-```
-
-Run `docker-compose up -d` to launch the containers.
-You can then access the PHP LDAP admin server at http://localhost:80 and login with the admin credentials you provided in the docker-compose file.
+You can then access the PHP LDAP admin server at http://localhost:8080 and login with the admin credentials you provided in the docker-compose file.
 
 username: `CN=admin,DC=example,DC=org`
 password: `admin`
