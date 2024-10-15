@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -224,7 +225,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	resource, err := rs.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		user.DN,
+		strings.ToLower(user.DN),
 		userTraitOptions,
 	)
 	if err != nil {
