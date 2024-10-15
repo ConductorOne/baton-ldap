@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -92,7 +93,7 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 		ResourcesPageSize,
 	)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list groups: %w", err)
+		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list groups in '%s': %w", g.groupSearchDN.String(), err)
 	}
 
 	pageToken, err := bag.NextToken(nextPage)
@@ -358,6 +359,12 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		modifyRequest,
 	)
 	if err != nil {
+		var lerr *ldap3.Error
+		if errors.As(err, &lerr) {
+			if lerr.ResultCode == ldap3.LDAPResultNoSuchAttribute {
+				return nil, nil
+			}
+		}
 		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership from user: %w", err)
 	}
 
