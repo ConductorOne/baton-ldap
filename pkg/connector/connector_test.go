@@ -48,9 +48,9 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 			return nil, err
 		}
 		fdPath := fd.Name()
-		fd.Close()
+		_ = fd.Close()
 		t.Cleanup(func() {
-			os.Remove(fdPath)
+			_ = os.Remove(fdPath)
 		})
 
 		err = os.WriteFile(fdPath, data, 0600)
