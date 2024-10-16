@@ -206,6 +206,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	return rv, "", nil, nil
 }
 
+// findMember: note this function can return an empty string if the member is not found.
 func (g *groupResourceType) findMember(ctx context.Context, memberId string) (string, error) {
 	g.uid2dnMtx.Lock()
 	if dn, ok := g.uid2dnCache[memberId]; ok {
@@ -249,17 +250,20 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 
 	if err != nil {
 		l.Error("ldap-connector: expanding group: failed to get user", zap.String("member_id", memberId), zap.Error(err))
+		// returns err, since this is a network error
 		return "", err
 	}
 
 	if len(memberEntry) == 0 {
-		l.Error("ldap-connector: expanding group: failed to find user by uid", zap.String("member_id", memberId), zap.String("search_filter", filter))
+		l.Error("ldap-connector: expanding group: failed to find user", zap.String("member_id", memberId), zap.String("search_filter", filter))
 		return "", nil
 	}
 
 	if len(memberEntry) > 1 {
 		err := fmt.Errorf("multiple users found by search")
 		l.Error("ldap-connector: expanding group: multiple users found by search", zap.String("member_id", memberId), zap.String("search_filter", filter))
+		// note: returning error since this feels like a
+		// developer error?
 		return "", err
 	}
 
@@ -267,6 +271,8 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 	memDN, err := ldap.CanonicalizeDN(mem.DN)
 	if err != nil {
 		l.Error("ldap-connector: expanding group: invalid DN", zap.String("member_id", memberId), zap.String("search_filter", filter), zap.Error(err), zap.String("member_dn", mem.DN))
+		// note: returning error since this feels like a
+		// developer error?
 		return "", err
 	}
 
