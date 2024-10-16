@@ -94,12 +94,12 @@ for (let groupId = 0; groupId < groupCount; groupId++) {
 objectClass: top
 objectClass: groupOfUniqueNames
 cn: othertestgroup${groupIdStr}
-owner: cn=testuser00000@example.com,dc=example,dc=org
+owner: cn=TESTuser00000@example.com,dc=example,dc=org
 `;
 
   for (let userId = 0; userId < usersPerGroup; userId++) {
     const userIdStr = ("00000" + userId).slice(-5);
-    groupStr += `uniquemember: cn=testuser${userIdStr}@example.com,dc=example,dc=org
+    groupStr += `uniquemember: cn=TESTuser${userIdStr}@example.com,dc=EXAMPLE,dc=org
 `;
   }
 
@@ -109,7 +109,7 @@ owner: cn=testuser00000@example.com,dc=example,dc=org
 // Users
 for (let userId = 0; userId < userCount; userId++) {
   const userIdStr = ("00000" + userId).slice(-5);
-  const email = `testuser${userIdStr}@example.com`
+  const email = `testUSER${userIdStr}@example.com`
   write(`dn: cn=${email},dc=example,dc=org
 objectClass: inetOrgPerson
 objectClass: posixAccount

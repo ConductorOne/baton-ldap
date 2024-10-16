@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -71,7 +72,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	resource, err := rs.NewGroupResource(
 		groupName,
 		resourceTypeGroup,
-		group.DN,
+		strings.ToLower(group.DN),
 		groupTraitOptions,
 	)
 	if err != nil {
@@ -139,6 +140,7 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 
 // newGrantFromDN - create a `Grant` from a given group and user distinguished name.
 func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
+	userDN = strings.ToLower(userDN)
 	g := grant.NewGrant(
 		// remove group profile from grant so we're not saving all group memberships in every grant
 		&v2.Resource{
