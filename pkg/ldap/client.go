@@ -82,7 +82,12 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 			// If we are revoking a user's membership from a resource, and the user is not a member of the resource, we don't want to return an error.
 			// If we are adding a user to a resource, and the user is already a member of the resource, we also don't want to return an error.
-			if ldap.IsErrorAnyOf(err, ldap.LDAPResultAttributeOrValueExists, ldap.LDAPResultEntryAlreadyExists, ldap.LDAPResultUnwillingToPerform) && isModify {
+			if ldap.IsErrorAnyOf(err,
+				ldap.LDAPResultAttributeOrValueExists,
+				ldap.LDAPResultEntryAlreadyExists,
+				ldap.LDAPResultUnwillingToPerform,
+				ldap.LDAPResultNoSuchAttribute,
+			) && isModify {
 				return nil
 			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
@@ -117,6 +122,24 @@ func encodePageToken(cookie []byte) string {
 	requestId++
 	requestId %= 100
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
+}
+
+func (c *Client) LdapGet(ctx context.Context,
+	searchDN *ldap.DN,
+	filter string,
+	attrNames []string,
+) (*ldap.Entry, error) {
+	entries, _, err := c.LdapSearch(ctx, ldap.ScopeBaseObject, searchDN, filter, attrNames, "", 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("entry not found: %s", searchDN.String())
+	}
+	if len(entries) > 1 {
+		return nil, fmt.Errorf("multiple entries found: %s", searchDN.String())
+	}
+	return entries[0], nil
 }
 
 func (c *Client) LdapSearch(ctx context.Context,

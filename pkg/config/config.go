@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/conductorone/baton-ldap/pkg/ldap"
 	"github.com/conductorone/baton-sdk/pkg/field"
-	"github.com/go-ldap/ldap/v3"
+	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/spf13/viper"
 )
@@ -87,7 +88,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if baseDNValue := v.GetString(baseDNField.FieldName); baseDNValue != "" {
-		baseDN, err := ldap.ParseDN(baseDNValue)
+		baseDN, err := ldap.CanonicalizeDN(baseDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing base-dn: %w", err)
 		}
@@ -95,7 +96,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if userDNValue := v.GetString(userDNField.FieldName); userDNValue != "" {
-		userDN, err := ldap.ParseDN(userDNValue)
+		userDN, err := ldap.CanonicalizeDN(userDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing user-dn: %w", err)
 		}
@@ -103,7 +104,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if bindDNValue := v.GetString(bindDNField.FieldName); bindDNValue != "" {
-		bindDN, err := ldap.ParseDN(bindDNValue)
+		bindDN, err := ldap.CanonicalizeDN(bindDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing bind-dn: %w", err)
 		}
@@ -115,7 +116,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if userSearchDNValue := v.GetString(userSearchDNField.FieldName); userSearchDNValue != "" {
-		userSearchDN, err := ldap.ParseDN(userSearchDNValue)
+		userSearchDN, err := ldap.CanonicalizeDN(userSearchDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing user-search-dn: %w", err)
 		}
@@ -125,7 +126,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if groupSearchDNValue := v.GetString(groupSearchDNField.FieldName); groupSearchDNValue != "" {
-		groupSearchDN, err := ldap.ParseDN(groupSearchDNValue)
+		groupSearchDN, err := ldap.CanonicalizeDN(groupSearchDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing group-search-dn: %w", err)
 		}
@@ -135,7 +136,7 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 
 	if roleSearchDNValue := v.GetString(roleSearchDNField.FieldName); roleSearchDNValue != "" {
-		roleSearchDN, err := ldap.ParseDN(roleSearchDNValue)
+		roleSearchDN, err := ldap.CanonicalizeDN(roleSearchDNValue)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing role-search-dn: %w", err)
 		}
@@ -157,14 +158,14 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 
 type Config struct {
 	ServerURL *url.URL
-	BaseDN    *ldap.DN
+	BaseDN    *ldap3.DN
 
 	BindPassword string
-	BindDN       *ldap.DN
+	BindDN       *ldap3.DN
 
-	UserSearchDN  *ldap.DN
-	GroupSearchDN *ldap.DN
-	RoleSearchDN  *ldap.DN
+	UserSearchDN  *ldap3.DN
+	GroupSearchDN *ldap3.DN
+	RoleSearchDN  *ldap3.DN
 
 	DisableOperationalAttrs bool
 	InsecureSkipVerify      bool

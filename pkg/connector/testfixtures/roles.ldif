@@ -1,0 +1,38 @@
+version: 1
+
+dn: ou=roles,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: roles
+
+dn: cn=managers,ou=roles,dc=example,dc=org
+cn: managers
+objectclass: organizationalRole
+objectclass: top
+roleoccupant: cn=roger,ou=users,dc=example,dc=org
+
+dn: cn=roger,ou=users,dc=example,dc=org
+cn: roger
+gidnumber: 500
+givenname: Roger Rabbit
+homedirectory: /home/roger
+loginshell: /bin/bash
+objectclass: inetOrgPerson
+objectclass: posixAccount
+objectclass: top
+sn: Rabbit
+uid: roger
+uidnumber: 1000
+
+dn: cn=bob,ou=users,dc=example,dc=org
+cn: bob
+gidnumber: 500
+givenname: Bob Burger
+homedirectory: /home/bob
+loginshell: /bin/bash
+objectclass: inetOrgPerson
+objectclass: posixAccount
+objectclass: top
+sn: Bob
+uid: bob
+uidnumber: 1000

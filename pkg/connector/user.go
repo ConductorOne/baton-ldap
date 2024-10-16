@@ -11,6 +11,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	mapset "github.com/deckarep/golang-set/v2"
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -22,7 +23,8 @@ import (
 // InetOrgPerson resource structure
 // https://datatracker.ietf.org/doc/html/rfc2798
 const (
-	userFilter            = "(|(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson))"
+	userObjectClasses     = "(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson)"
+	userFilter            = "(|" + userObjectClasses + ")"
 	attrUserUID           = "uid"
 	attrUserCommonName    = "cn"
 	attrFirstName         = "givenName"
@@ -54,10 +56,10 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 func parseUserNames(user *ldap.Entry) (string, string, string) {
-	fullName := user.GetAttributeValue(attrUserCommonName)
-	firstName := user.GetAttributeValue(attrFirstName)
-	lastName := user.GetAttributeValue(attrLastName)
-	displayName := user.GetAttributeValue(attrUserDisplayName)
+	fullName := user.GetEqualFoldAttributeValue(attrUserCommonName)
+	firstName := user.GetEqualFoldAttributeValue(attrFirstName)
+	lastName := user.GetEqualFoldAttributeValue(attrLastName)
+	displayName := user.GetEqualFoldAttributeValue(attrUserDisplayName)
 
 	if firstName == "" || lastName == "" {
 		firstName, lastName = splitFullName(fullName)
@@ -74,7 +76,7 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 	userStatus := v2.UserTrait_Status_STATUS_UNSPECIFIED
 
 	// Currently only UserAccountControlFlag from Microsoft is supported
-	userAccountControlFlag := user.GetAttributeValue(attrUserAccountControl)
+	userAccountControlFlag := user.GetEqualFoldAttributeValue(attrUserAccountControl)
 	if userAccountControlFlag != "" {
 		userAccountControlFlag, err := strconv.ParseInt(userAccountControlFlag, 10, 64)
 		if err != nil {
@@ -94,13 +96,13 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 
 func parseUserLogin(user *ldap.Entry) (string, []string) {
 	login := ""
-	aliases := []string{}
+	aliases := mapset.NewSet[string]()
 
-	sAMAccountName := user.GetAttributeValue(attrsAMAccountName)
-	uid := user.GetAttributeValue(attrUserUID)
-	cn := user.GetAttributeValue(attrUserCommonName)
-	principalName := user.GetAttributeValue(attrUserPrincipalName)
-	guid := user.GetAttributeValue(attrObjectGUID)
+	sAMAccountName := user.GetEqualFoldAttributeValue(attrsAMAccountName)
+	uid := user.GetEqualFoldAttributeValue(attrUserUID)
+	cn := user.GetEqualFoldAttributeValue(attrUserCommonName)
+	principalName := user.GetEqualFoldAttributeValue(attrUserPrincipalName)
+	guid := user.GetEqualFoldAttributeValue(attrObjectGUID)
 
 	for _, attr := range []string{sAMAccountName, uid, cn, principalName, guid} {
 		if attr == "" || containsBinaryData(attr) {
@@ -110,13 +112,11 @@ func parseUserLogin(user *ldap.Entry) (string, []string) {
 			login = attr
 			continue
 		}
-		if attr == login {
-			continue
-		}
-		aliases = append(aliases, attr)
+		aliases.Add(attr)
 	}
+	aliases.Remove(login)
 
-	return login, aliases
+	return login, aliases.ToSlice()
 }
 
 func parseUserLastLogin(lastLoginStr string) (*time.Time, error) {
@@ -152,16 +152,27 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	l := ctxzap.Extract(ctx)
 
 	firstName, lastName, displayName := parseUserNames(user)
-	userId := user.GetAttributeValue(attrUserUID)
+	userId := user.GetEqualFoldAttributeValue(attrUserUID)
+
+	udn, err := ldap.CanonicalizeDN(user.DN)
+	if err != nil {
+		return nil, err
+	}
+	userDN := udn.String()
 
 	profile := map[string]interface{}{
 		"user_id":    userId,
 		"first_name": firstName,
 		"last_name":  lastName,
-		"path":       user.DN,
+		"path":       userDN,
 	}
 
 	for _, v := range user.Attributes {
+		// skip userPassword, msSFU30Password, etc
+		if strings.Contains(strings.ToLower(v.Name), "password") {
+			continue
+		}
+
 		if len(v.Values) == 1 && !containsBinaryData(v.Values[0]) {
 			profile[v.Name] = v.Values[0]
 		}
@@ -178,11 +189,11 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	userTraitOptions := []rs.UserTraitOption{
-		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
+		rs.WithEmail(user.GetEqualFoldAttributeValue(attrUserMail), true),
 		rs.WithStatus(userStatus),
 	}
 
-	objectClasses := user.GetAttributeValues("objectClass")
+	objectClasses := user.GetEqualFoldAttributeValues("objectClass")
 	switch {
 	case slices.Contains(objectClasses, "computer"):
 		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_SERVICE))
@@ -200,16 +211,16 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 
 	userTraitOptions = append(userTraitOptions, rs.WithUserProfile(profile))
 
-	createdAt := user.GetAttributeValue(attrUserCreatedAt)
+	createdAt := user.GetEqualFoldAttributeValue(attrUserCreatedAt)
 	createTime, err := time.Parse("20060102150405Z0700", createdAt)
 	if err == nil {
 		userTraitOptions = append(userTraitOptions, rs.WithCreatedAt(createTime))
 	}
 
 	// Try openldap format first, then fall back to Active Directory's format
-	lastLogin, err := parseUserLastLogin(user.GetAttributeValue(attrUserLastLogon))
+	lastLogin, err := parseUserLastLogin(user.GetEqualFoldAttributeValue(attrUserLastLogon))
 	if err != nil {
-		lastLogin, _ = parseUserLastLogin(user.GetAttributeValue(attrUserAuthTimestamp))
+		lastLogin, _ = parseUserLastLogin(user.GetEqualFoldAttributeValue(attrUserAuthTimestamp))
 	}
 	if lastLogin != nil {
 		userTraitOptions = append(userTraitOptions, rs.WithLastLogin(*lastLogin))
@@ -220,12 +231,12 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		displayName = userId
 	}
 
-	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("dn", user.DN))
+	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("user_dn", userDN))
 
 	resource, err := rs.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		strings.ToLower(user.DN),
+		userDN,
 		userTraitOptions,
 	)
 	if err != nil {
@@ -267,9 +278,8 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 
 	var rv []*v2.Resource
 	for _, userEntry := range userEntries {
-		userEntryCopy := userEntry
 		l.Debug("processing user", zap.String("dn", userEntry.DN))
-		ur, err := userResource(ctx, userEntryCopy)
+		ur, err := userResource(ctx, userEntry)
 		if err != nil {
 			return nil, pageToken, nil, err
 		}

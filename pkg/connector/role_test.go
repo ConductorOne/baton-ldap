@@ -4,72 +4,64 @@ import (
 	"context"
 	"testing"
 
-	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func TestGroupGrantRevoke(t *testing.T) {
+func TestRoleGrantRevoke(t *testing.T) {
 	ctx, done := context.WithCancel(context.Background())
 	defer done()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
-	connector, err := createConnector(ctx, t, "simple..ldif")
+	connector, err := createConnector(ctx, t, "roles.ldif")
 	require.NoError(t, err)
 
-	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN)
+	rb := roleBuilder(connector.client, connector.config.RoleSearchDN)
 
-	groups, pt, _, err := gb.List(ctx, nil, &pagination.Token{})
+	roles, pt, _, err := rb.List(ctx, nil, &pagination.Token{})
 	require.NoError(t, err)
-	require.Len(t, groups, 2)
+	require.Len(t, roles, 1)
 	require.Empty(t, pt)
+	require.Equal(t, roles[0].GetDisplayName(), "managers")
 
-	staffGroup := pluck(groups, func(g *v2.Resource) bool {
-		return g.GetDisplayName() == "staff"
-	})
-	require.NotNil(t, staffGroup)
+	managerRole := roles[0]
 
-	testGroup := pluck(groups, func(g *v2.Resource) bool {
-		return g.GetDisplayName() == "test"
-	})
-	require.NotNil(t, testGroup)
-
-	ents, pt, _, err := gb.Entitlements(ctx, testGroup, &pagination.Token{})
+	ents, pt, _, err := rb.Entitlements(ctx, managerRole, &pagination.Token{})
 	require.NoError(t, err)
 	require.Empty(t, pt)
 	require.Len(t, ents, 1)
 
 	membershipEnt := ents[0]
 
-	grants, pt, _, err := gb.Grants(ctx, testGroup, &pagination.Token{})
+	grants, pt, _, err := rb.Grants(ctx, managerRole, &pagination.Token{})
 	require.NoError(t, err)
 	require.Empty(t, pt)
 	require.Len(t, grants, 1)
 
 	rogerGrant := grants[0]
-	_, err = gb.Revoke(ctx, rogerGrant)
+	_, err = rb.Revoke(ctx, rogerGrant)
 	require.NoError(t, err)
 	// test double revoke doesn't cause a hard error
-	_, err = gb.Revoke(ctx, rogerGrant)
+	_, err = rb.Revoke(ctx, rogerGrant)
 	require.NoError(t, err)
 
 	// verify 0 grants
-	grants, pt, _, err = gb.Grants(ctx, testGroup, &pagination.Token{})
+	grants, pt, _, err = rb.Grants(ctx, managerRole, &pagination.Token{})
 	require.NoError(t, err)
 	require.Empty(t, pt)
 	require.Len(t, grants, 0)
 
-	_, err = gb.Grant(ctx, rogerGrant.Principal, membershipEnt)
+	_, err = rb.Grant(ctx, rogerGrant.Principal, membershipEnt)
 	require.NoError(t, err)
 	// test double revoke doesn't cause a hard error
-	_, err = gb.Grant(ctx, rogerGrant.Principal, membershipEnt)
+	_, err = rb.Grant(ctx, rogerGrant.Principal, membershipEnt)
 	require.NoError(t, err)
 
 	// verify 1 grant
-	grants, pt, _, err = gb.Grants(ctx, testGroup, &pagination.Token{})
+	grants, pt, _, err = rb.Grants(ctx, managerRole, &pagination.Token{})
 	require.NoError(t, err)
 	require.Empty(t, pt)
 	require.Len(t, grants, 1)
