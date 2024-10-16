@@ -8,7 +8,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/go-ldap/ldap/v3"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var ResourcesPageSize uint32 = 50
@@ -59,7 +58,7 @@ func parseValues(entry *ldap.Entry, targetAttrs []string) mapset.Set[string] {
 
 func parseValue(entry *ldap.Entry, targetAttrs []string) string {
 	for _, targetAttr := range targetAttrs {
-		payload := entry.GetAttributeValue(targetAttr)
+		payload := entry.GetEqualFoldAttributeValue(targetAttr)
 
 		if payload != "" {
 			return payload
@@ -67,37 +66,4 @@ func parseValue(entry *ldap.Entry, targetAttrs []string) string {
 	}
 
 	return ""
-}
-
-func getProfileStringArray(profile *structpb.Struct, k string) ([]string, bool) {
-	var values []string
-	if profile == nil {
-		return nil, false
-	}
-
-	v, ok := profile.Fields[k]
-	if !ok {
-		return nil, false
-	}
-
-	s, ok := v.Kind.(*structpb.Value_ListValue)
-	if !ok {
-		return nil, false
-	}
-
-	for _, v := range s.ListValue.Values {
-		if strVal := v.GetStringValue(); strVal != "" {
-			values = append(values, strVal)
-		}
-	}
-
-	return values, true
-}
-
-func stringSliceToInterfaceSlice(s []string) []interface{} {
-	var i []interface{}
-	for _, v := range s {
-		i = append(i, v)
-	}
-	return i
 }

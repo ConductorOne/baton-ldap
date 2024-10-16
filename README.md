@@ -59,7 +59,7 @@ password: `admin`
 After you login you can create new resources to be synced by baton. 
 
 After creating new resources on the LDAP server, use the `baton-ldap` cli to sync the data from the LDAP server with the example command below.
-`baton-ldap --base-dn dc=example,dc=org --user-dn cn=admin,dc=example,dc=org --password admin --domain localhost`
+`baton-ldap --base-dn dc=example,dc=org --bind-dn cn=admin,dc=example,dc=org --password admin --domain localhost`
 
 After successfully syncing data, use the baton CLI to list the resources and see the synced data.
 `baton resources`

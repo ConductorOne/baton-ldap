@@ -6,7 +6,7 @@ import (
 	ldap3 "github.com/go-ldap/ldap/v3"
 )
 
-// List of attribute types whose values should be made lowercase
+// List of attribute types whose values should be made lowercase.
 var caseInsensitiveAttrs = map[string]bool{
 	"cn":              true,
 	"uid":             true,

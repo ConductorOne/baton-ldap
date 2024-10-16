@@ -87,6 +87,7 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 		BaseDN:        mustParseDN(t, "dc=example,dc=org"),
 		GroupSearchDN: mustParseDN(t, "ou=groups,dc=example,dc=org"),
 		UserSearchDN:  mustParseDN(t, "ou=users,dc=example,dc=org"),
+		RoleSearchDN:  mustParseDN(t, "ou=roles,dc=example,dc=org"),
 		BindPassword:  "hunter2",
 	}
 	return New(ctx, cf)
@@ -96,4 +97,14 @@ func mustParseDN(t *testing.T, input string) *ldap.DN {
 	dn, err := ldap.ParseDN(input)
 	require.NoError(t, err)
 	return dn
+}
+
+func pluck[T any](slice []T, fn func(v T) bool) T {
+	var emptyT T
+	for _, v := range slice {
+		if fn(v) {
+			return v
+		}
+	}
+	return emptyT
 }

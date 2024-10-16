@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -153,14 +154,25 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	firstName, lastName, displayName := parseUserNames(user)
 	userId := user.GetAttributeValue(attrUserUID)
 
+	udn, err := ldap.CanonicalizeDN(user.DN)
+	if err != nil {
+		return nil, err
+	}
+	userDN := udn.String()
+
 	profile := map[string]interface{}{
 		"user_id":    userId,
 		"first_name": firstName,
 		"last_name":  lastName,
-		"path":       user.DN,
+		"path":       userDN,
 	}
 
 	for _, v := range user.Attributes {
+		// skip userPassword, msSFU30Password, etc
+		if strings.Contains(strings.ToLower(v.Name), "password") {
+			continue
+		}
+
 		if len(v.Values) == 1 && !containsBinaryData(v.Values[0]) {
 			profile[v.Name] = v.Values[0]
 		}
@@ -219,11 +231,6 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		displayName = userId
 	}
 
-	udn, err := ldap.CanonicalizeDN(user.DN)
-	if err != nil {
-		return nil, err
-	}
-	userDN := udn.String()
 	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("user_dn", userDN))
 
 	resource, err := rs.NewUserResource(
