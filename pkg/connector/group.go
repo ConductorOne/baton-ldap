@@ -53,10 +53,15 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for an LDAP Group.
 func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error) {
+	gdn, err := ldap.CanonicalizeDN(group.DN)
+	if err != nil {
+		return nil, err
+	}
+	groupDN := gdn.String()
 	groupId := parseValue(group, []string{attrGroupIdPosix})
-	// Don't save members in profile since that could be a ton of data, wasting storage and hitting GRPC limits
 	profile := map[string]interface{}{
-		"group_description": group.GetAttributeValue(attrGroupDescription),
+		"group_description": group.GetEqualFoldAttributeValue(attrGroupDescription),
+		"path":              groupDN,
 	}
 
 	if groupId != "" {
@@ -67,17 +72,12 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 		rs.WithGroupProfile(profile),
 	}
 
-	groupName := group.GetAttributeValue(attrGroupCommonName)
-
-	gdn, err := ldap.CanonicalizeDN(group.DN)
-	if err != nil {
-		return nil, err
-	}
+	groupName := group.GetEqualFoldAttributeValue(attrGroupCommonName)
 
 	resource, err := rs.NewGroupResource(
 		groupName,
 		resourceTypeGroup,
-		gdn.String(),
+		groupDN,
 		groupTraitOptions,
 	)
 	if err != nil {

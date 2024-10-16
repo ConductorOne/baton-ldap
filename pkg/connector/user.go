@@ -56,10 +56,10 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 func parseUserNames(user *ldap.Entry) (string, string, string) {
-	fullName := user.GetAttributeValue(attrUserCommonName)
-	firstName := user.GetAttributeValue(attrFirstName)
-	lastName := user.GetAttributeValue(attrLastName)
-	displayName := user.GetAttributeValue(attrUserDisplayName)
+	fullName := user.GetEqualFoldAttributeValue(attrUserCommonName)
+	firstName := user.GetEqualFoldAttributeValue(attrFirstName)
+	lastName := user.GetEqualFoldAttributeValue(attrLastName)
+	displayName := user.GetEqualFoldAttributeValue(attrUserDisplayName)
 
 	if firstName == "" || lastName == "" {
 		firstName, lastName = splitFullName(fullName)
@@ -76,7 +76,7 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 	userStatus := v2.UserTrait_Status_STATUS_UNSPECIFIED
 
 	// Currently only UserAccountControlFlag from Microsoft is supported
-	userAccountControlFlag := user.GetAttributeValue(attrUserAccountControl)
+	userAccountControlFlag := user.GetEqualFoldAttributeValue(attrUserAccountControl)
 	if userAccountControlFlag != "" {
 		userAccountControlFlag, err := strconv.ParseInt(userAccountControlFlag, 10, 64)
 		if err != nil {
@@ -98,11 +98,11 @@ func parseUserLogin(user *ldap.Entry) (string, []string) {
 	login := ""
 	aliases := mapset.NewSet[string]()
 
-	sAMAccountName := user.GetAttributeValue(attrsAMAccountName)
-	uid := user.GetAttributeValue(attrUserUID)
-	cn := user.GetAttributeValue(attrUserCommonName)
-	principalName := user.GetAttributeValue(attrUserPrincipalName)
-	guid := user.GetAttributeValue(attrObjectGUID)
+	sAMAccountName := user.GetEqualFoldAttributeValue(attrsAMAccountName)
+	uid := user.GetEqualFoldAttributeValue(attrUserUID)
+	cn := user.GetEqualFoldAttributeValue(attrUserCommonName)
+	principalName := user.GetEqualFoldAttributeValue(attrUserPrincipalName)
+	guid := user.GetEqualFoldAttributeValue(attrObjectGUID)
 
 	for _, attr := range []string{sAMAccountName, uid, cn, principalName, guid} {
 		if attr == "" || containsBinaryData(attr) {
@@ -152,7 +152,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	l := ctxzap.Extract(ctx)
 
 	firstName, lastName, displayName := parseUserNames(user)
-	userId := user.GetAttributeValue(attrUserUID)
+	userId := user.GetEqualFoldAttributeValue(attrUserUID)
 
 	udn, err := ldap.CanonicalizeDN(user.DN)
 	if err != nil {
@@ -189,11 +189,11 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	userTraitOptions := []rs.UserTraitOption{
-		rs.WithEmail(user.GetAttributeValue(attrUserMail), true),
+		rs.WithEmail(user.GetEqualFoldAttributeValue(attrUserMail), true),
 		rs.WithStatus(userStatus),
 	}
 
-	objectClasses := user.GetAttributeValues("objectClass")
+	objectClasses := user.GetEqualFoldAttributeValues("objectClass")
 	switch {
 	case slices.Contains(objectClasses, "computer"):
 		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_SERVICE))
@@ -211,16 +211,16 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 
 	userTraitOptions = append(userTraitOptions, rs.WithUserProfile(profile))
 
-	createdAt := user.GetAttributeValue(attrUserCreatedAt)
+	createdAt := user.GetEqualFoldAttributeValue(attrUserCreatedAt)
 	createTime, err := time.Parse("20060102150405Z0700", createdAt)
 	if err == nil {
 		userTraitOptions = append(userTraitOptions, rs.WithCreatedAt(createTime))
 	}
 
 	// Try openldap format first, then fall back to Active Directory's format
-	lastLogin, err := parseUserLastLogin(user.GetAttributeValue(attrUserLastLogon))
+	lastLogin, err := parseUserLastLogin(user.GetEqualFoldAttributeValue(attrUserLastLogon))
 	if err != nil {
-		lastLogin, _ = parseUserLastLogin(user.GetAttributeValue(attrUserAuthTimestamp))
+		lastLogin, _ = parseUserLastLogin(user.GetEqualFoldAttributeValue(attrUserAuthTimestamp))
 	}
 	if lastLogin != nil {
 		userTraitOptions = append(userTraitOptions, rs.WithLastLogin(*lastLogin))

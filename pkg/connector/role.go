@@ -40,19 +40,25 @@ func (r *roleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for an LDAP Role.
 func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
+	rdn, err := ldap.CanonicalizeDN(role.DN)
+	if err != nil {
+		return nil, err
+	}
+	roleDN := rdn.String()
 	profile := map[string]interface{}{
-		"role_description": role.GetAttributeValue(attrRoleDescription),
+		"role_description": role.GetEqualFoldAttributeValue(attrRoleDescription),
+		"path":             roleDN,
 	}
 
 	roleTraitOptions := []rs.RoleTraitOption{
 		rs.WithRoleProfile(profile),
 	}
 
-	roleName := role.GetAttributeValue(attrRoleCommonName)
+	roleName := role.GetEqualFoldAttributeValue(attrRoleCommonName)
 	resource, err := rs.NewRoleResource(
 		roleName,
 		resourceTypeRole,
-		role.DN,
+		roleDN,
 		roleTraitOptions,
 	)
 	if err != nil {
