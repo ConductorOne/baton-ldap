@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+	"regexp"
 	"sync"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -18,14 +18,20 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
-	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)"
-	groupFilter        = "(|" + groupObjectClasses + ")"
-	groupIdFilter      = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
-	groupMemberFilter  = "(&(objectClass=posixAccount)(uid=%s))"
+	groupObjectClasses   = "(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)"
+	groupFilter          = "(|" + groupObjectClasses + ")"
+	groupIdFilter        = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
+	groupMemberUidFilter = `(&
+  (|` + userObjectClasses + `)
+  (uid=%s)
+)`
+	groupMemberCommonNameFilter = `(&
+(|` + userObjectClasses + `)
+(cn=%s)
+)`
 
 	attrGroupCommonName   = "cn"
 	attrGroupIdPosix      = "gidNumber"
@@ -69,10 +75,15 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 
 	groupName := group.GetAttributeValue(attrGroupCommonName)
 
+	gdn, err := ldap.CanonicalizeDN(group.DN)
+	if err != nil {
+		return nil, err
+	}
+
 	resource, err := rs.NewGroupResource(
 		groupName,
 		resourceTypeGroup,
-		strings.ToLower(group.DN),
+		gdn.String(),
 		groupTraitOptions,
 	)
 	if err != nil {
@@ -140,7 +151,6 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 
 // newGrantFromDN - create a `Grant` from a given group and user distinguished name.
 func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
-	userDN = strings.ToLower(userDN)
 	g := grant.NewGrant(
 		// remove group profile from grant so we're not saving all group memberships in every grant
 		&v2.Resource{
@@ -156,81 +166,36 @@ func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
 	return g
 }
 
+var numericUidRe = regexp.MustCompile(`^\d+$`)
+
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
-
-	groupDN, err := ldap3.ParseDN(resource.Id.Resource)
+	groupDN, err := ldap.CanonicalizeDN(resource.Id.Resource)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("ldap-connector: invalid group DN: '%s' in group grants: %w", resource.Id.Resource, err)
 	}
+	l = l.With(zap.Stringer("group_dn", groupDN))
 
-	groupTrait, err := rs.GetGroupTrait(resource)
+	ldapGroup, err := g.client.LdapGet(
+		ctx,
+		groupDN,
+		groupFilter,
+		nil,
+	)
 	if err != nil {
-		return nil, "", nil, err
-	}
-	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
-	if err != nil {
-		return nil, "", nil, err
-	}
-
-	groupId := ""
-	v, ok := groupTrait.Profile.Fields["gid"]
-	if ok {
-		s, ok := v.Kind.(*structpb.Value_StringValue)
-		if ok {
-			groupId = s.StringValue
-		}
-	}
-
-	var ldapGroup []*ldap3.Entry
-	var nextPage string
-
-	if groupId == "" {
-		ldapGroup, nextPage, err = g.client.LdapSearch(
-			ctx,
-			ldap3.ScopeBaseObject,
-			groupDN,
-			groupFilter,
-			nil,
-			"",
-			ResourcesPageSize,
-		)
-	} else {
-		query := fmt.Sprintf(groupIdFilter, groupId)
-		ldapGroup, nextPage, err = g.client.LdapSearch(
-			ctx,
-			ldap3.ScopeBaseObject,
-			groupDN,
-			query,
-			nil,
-			page,
-			ResourcesPageSize,
-		)
-	}
-
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("ldap-connector: failed to list group members: %w", err)
-	}
-	if len(ldapGroup) == 0 {
-		return nil, "", nil, fmt.Errorf("ldap-connector: no group found")
-	}
-	if len(ldapGroup) > 1 {
-		return nil, "", nil, fmt.Errorf("ldap-connector: too many groups found")
-	}
-
-	pageToken, err := bag.NextToken(nextPage)
-	if err != nil {
+		err := fmt.Errorf("ldap-connector: failed to list group members: %w", err)
+		l.Error("ldap-connector: failed to list group members", zap.Error(err))
 		return nil, "", nil, err
 	}
 
-	memberIDs := parseValues(ldapGroup[0], []string{attrGroupUniqueMember, attrGroupMember, attrGroupMemberPosix})
+	memberIDs := parseValues(ldapGroup, []string{attrGroupUniqueMember, attrGroupMember, attrGroupMemberPosix})
 
 	// create membership grants
 	var rv []*v2.Grant
-	for _, memberId := range memberIDs {
+	for memberId := range memberIDs.Iter() {
 		var memberEntry []*ldap.Entry
 
-		if parsedDN, err := ldap3.ParseDN(memberId); err == nil {
+		if parsedDN, err := ldap.CanonicalizeDN(memberId); err == nil {
 			g := newGrantFromDN(resource, parsedDN.String())
 			rv = append(rv, g)
 			continue
@@ -245,12 +210,19 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		}
 		g.uid2dnMtx.Unlock()
 
+		var filter string
+		if numericUidRe.MatchString(memberId) {
+			filter = fmt.Sprintf(groupMemberUidFilter, ldap3.EscapeFilter(memberId))
+		} else {
+			filter = fmt.Sprintf(groupMemberCommonNameFilter, ldap3.EscapeFilter(memberId))
+		}
+
 		// Group member doesn't look like it is a DN, search for it as a UID
 		memberEntry, _, err = g.client.LdapSearch(
 			ctx,
 			ldap3.ScopeWholeSubtree,
 			g.userSearchDN,
-			fmt.Sprintf(groupMemberFilter, memberId),
+			filter,
 			nil,
 			"",
 			1,
@@ -259,51 +231,48 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		if err != nil {
 			// TODO: collect errors
 			l.Error("ldap-connector: failed to get user", zap.String("member_id", memberId), zap.Error(err))
+			continue
 		}
 		if len(memberEntry) == 0 {
-			l.Error("ldap-connector: failed to find user with dn or UID", zap.String("member_id", memberId))
+			l.Error("ldap-connector: expanding group: failed to find user by DN or UID", zap.String("member_id", memberId), zap.String("search_filter", filter))
+			continue
 		}
 
+		if len(memberEntry) > 1 {
+			l.Error("ldap-connector: expanding group: multiple users found by DN or UID", zap.String("member_id", memberId), zap.String("search_filter", filter))
+			continue
+		}
+		mem := memberEntry[0]
+		memDN, err := ldap.CanonicalizeDN(mem.DN)
+		if err != nil {
+			l.Error("ldap-connector: expanding group: invalid DN", zap.String("member_id", memberId), zap.String("search_filter", filter), zap.Error(err))
+			continue
+		}
+		memberDN := memDN.String()
 		g.uid2dnMtx.Lock()
 		if len(memberEntry) == 1 {
-			g.uid2dnCache[memberId] = memberEntry[0].DN
+			g.uid2dnCache[memberId] = memberDN
 		}
 		g.uid2dnMtx.Unlock()
-
-		for _, e := range memberEntry {
-			g := newGrantFromDN(resource, e.DN)
-			rv = append(rv, g)
-		}
+		g := newGrantFromDN(resource, memberDN)
+		rv = append(rv, g)
 	}
 
-	return rv, pageToken, nil, nil
+	return rv, "", nil, nil
 }
 
 func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap3.Entry, error) {
-	gdn, err := ldap3.ParseDN(groupDN)
+	gdn, err := ldap.CanonicalizeDN(groupDN)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: invalid group DN: '%s' in getGroup: %w", groupDN, err)
 	}
 
-	groupEntries, _, err := g.client.LdapSearch(
+	return g.client.LdapGet(
 		ctx,
-		ldap3.ScopeBaseObject,
 		gdn,
 		groupFilter,
 		nil,
-		"",
-		ResourcesPageSize,
 	)
-
-	if err != nil {
-		return nil, fmt.Errorf("ldap-connector: failed to get group: %w", err)
-	}
-
-	if len(groupEntries) == 0 {
-		return nil, fmt.Errorf("ldap-connector: group DN %s not found", groupDN)
-	}
-
-	return groupEntries[0], nil
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
@@ -321,7 +290,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	}
 
 	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
-		dn, err := ldap3.ParseDN(principal.Id.Resource)
+		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
 			return nil, err
 		}
@@ -363,7 +332,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 
 	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
 	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
-		dn, err := ldap3.ParseDN(principal.Id.Resource)
+		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
 			return nil, err
 		}
@@ -379,6 +348,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		ctx,
 		modifyRequest,
 	)
+
 	if err != nil {
 		var lerr *ldap3.Error
 		if errors.As(err, &lerr) {

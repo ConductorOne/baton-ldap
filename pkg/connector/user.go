@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	mapset "github.com/deckarep/golang-set/v2"
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -22,7 +22,8 @@ import (
 // InetOrgPerson resource structure
 // https://datatracker.ietf.org/doc/html/rfc2798
 const (
-	userFilter            = "(|(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson))"
+	userObjectClasses     = "(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson)"
+	userFilter            = "(|" + userObjectClasses + ")"
 	attrUserUID           = "uid"
 	attrUserCommonName    = "cn"
 	attrFirstName         = "givenName"
@@ -94,7 +95,7 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 
 func parseUserLogin(user *ldap.Entry) (string, []string) {
 	login := ""
-	aliases := []string{}
+	aliases := mapset.NewSet[string]()
 
 	sAMAccountName := user.GetAttributeValue(attrsAMAccountName)
 	uid := user.GetAttributeValue(attrUserUID)
@@ -110,13 +111,11 @@ func parseUserLogin(user *ldap.Entry) (string, []string) {
 			login = attr
 			continue
 		}
-		if attr == login {
-			continue
-		}
-		aliases = append(aliases, attr)
+		aliases.Add(attr)
 	}
+	aliases.Remove(login)
 
-	return login, aliases
+	return login, aliases.ToSlice()
 }
 
 func parseUserLastLogin(lastLoginStr string) (*time.Time, error) {
@@ -220,12 +219,17 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		displayName = userId
 	}
 
-	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("dn", user.DN))
+	udn, err := ldap.CanonicalizeDN(user.DN)
+	if err != nil {
+		return nil, err
+	}
+	userDN := udn.String()
+	l.Debug("creating user resource", zap.String("display_name", displayName), zap.String("user_id", userId), zap.String("user_dn", userDN))
 
 	resource, err := rs.NewUserResource(
 		displayName,
 		resourceTypeUser,
-		strings.ToLower(user.DN),
+		userDN,
 		userTraitOptions,
 	)
 	if err != nil {
@@ -267,9 +271,8 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 
 	var rv []*v2.Resource
 	for _, userEntry := range userEntries {
-		userEntryCopy := userEntry
 		l.Debug("processing user", zap.String("dn", userEntry.DN))
-		ur, err := userResource(ctx, userEntryCopy)
+		ur, err := userResource(ctx, userEntry)
 		if err != nil {
 			return nil, pageToken, nil, err
 		}

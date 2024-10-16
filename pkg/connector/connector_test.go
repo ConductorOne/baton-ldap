@@ -81,14 +81,9 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 		return nil, err
 	}
 
-	bindDN, err := ldap.ParseDN("cn=admin,dc=example,dc=org")
-	if err != nil {
-		return nil, err
-	}
-
 	cf := &config.Config{
 		ServerURL:     sux,
-		BindDN:        bindDN,
+		BindDN:        mustParseDN(t, "cn=admin,dc=example,dc=org"),
 		BaseDN:        mustParseDN(t, "dc=example,dc=org"),
 		GroupSearchDN: mustParseDN(t, "ou=groups,dc=example,dc=org"),
 		UserSearchDN:  mustParseDN(t, "ou=users,dc=example,dc=org"),

@@ -6,6 +6,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/go-ldap/ldap/v3"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -42,15 +43,14 @@ func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, strin
 }
 
 // Parses the values of targetted attributes from an LDAP entry.
-func parseValues(entry *ldap.Entry, targetAttrs []string) []string {
-	var rv []string
+func parseValues(entry *ldap.Entry, targetAttrs []string) mapset.Set[string] {
+	rv := mapset.NewSet[string]()
 
 	for _, targetAttr := range targetAttrs {
 		payload := entry.GetAttributeValues(targetAttr)
 
-		if len(payload) > 0 {
-			rv = append(rv, payload...)
-			break
+		for _, v := range payload {
+			rv.Add(v)
 		}
 	}
 

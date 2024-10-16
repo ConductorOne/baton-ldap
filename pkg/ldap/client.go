@@ -119,6 +119,24 @@ func encodePageToken(cookie []byte) string {
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
 }
 
+func (c *Client) LdapGet(ctx context.Context,
+	searchDN *ldap.DN,
+	filter string,
+	attrNames []string,
+) (*ldap.Entry, error) {
+	entries, _, err := c.LdapSearch(ctx, ldap.ScopeBaseObject, searchDN, filter, attrNames, "", 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("entry not found: %s", searchDN.String())
+	}
+	if len(entries) > 1 {
+		return nil, fmt.Errorf("multiple entries found: %s", searchDN.String())
+	}
+	return entries[0], nil
+}
+
 func (c *Client) LdapSearch(ctx context.Context,
 	searchScope int,
 	searchDN *ldap.DN,
