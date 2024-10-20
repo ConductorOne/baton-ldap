@@ -79,3 +79,35 @@ func TestGroupGrantRevoke(t *testing.T) {
 	require.EqualExportedValues(t, rogerGrant.Entitlement, grants[0].Entitlement)
 	require.Equal(t, rogerGrant.Id, grants[0].Id)
 }
+
+func TestGroupPosixGidNumber(t *testing.T) {
+	ctx, done := context.WithCancel(context.Background())
+	defer done()
+
+	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
+
+	connector, err := createConnector(ctx, t, "primary_groups.ldif")
+	require.NoError(t, err)
+
+	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN)
+
+	groups, pt, _, err := gb.List(ctx, nil, &pagination.Token{})
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Empty(t, pt)
+
+	staffGroup := pluck(groups, func(g *v2.Resource) bool {
+		return g.GetDisplayName() == "staff"
+	})
+	require.NotNil(t, staffGroup)
+
+	ents, pt, _, err := gb.Entitlements(ctx, staffGroup, &pagination.Token{})
+	require.NoError(t, err)
+	require.Empty(t, pt)
+	require.Len(t, ents, 1)
+
+	grants, pt, _, err := gb.Grants(ctx, staffGroup, &pagination.Token{})
+	require.NoError(t, err)
+	require.Empty(t, pt)
+	require.Len(t, grants, 2)
+}

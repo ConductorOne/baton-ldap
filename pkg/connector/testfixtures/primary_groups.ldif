@@ -1,0 +1,42 @@
+version: 1
+
+dn: ou=groups,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: groups
+
+dn: cn=staff,ou=groups,dc=example,dc=org
+cn: staff
+gidnumber: 500
+objectclass: posixGroup
+objectclass: top
+
+dn: cn=Humpty Dumpty,ou=users,dc=example,dc=org
+cn:  Humpty Dumpty
+gidnumber: 500
+givenname:  Humpty
+homedirectory: /home/users/ hdumpty
+loginshell: /bin/bash
+objectclass: inetOrgPerson
+objectclass: posixAccount
+objectclass: top
+sn: Dumpty
+uid:  hdumpty
+uidnumber: 1001
+userpassword: {CRYPT}$6$jUJEWaXc$ZK2fUeCkJbhWfIWvXc/Xsjzo3.09DaVWFtFCl1s9qFH
+ I6X7UcPgDJ8SeNNagObmCNurn5VyWsufmBnac/qO601
+
+dn: cn=roger,ou=users,dc=example,dc=org
+cn: roger
+gidnumber: 500
+givenname: Roger Rabbit
+homedirectory: /home/roger
+loginshell: /bin/bash
+objectclass: inetOrgPerson
+objectclass: posixAccount
+objectclass: top
+sn: Rabbit
+uid: roger
+uidnumber: 1000
+userpassword: {CRYPT}$6$Sy1sX75G$/.nlmUpTeW7REXKsdXjRZVXitOrFPk5uEvGs/eC8cXi
+ D0WHlNBT33DDlHlgkP.eiOM5t6VrF1iDj8kYUMPwkT0
