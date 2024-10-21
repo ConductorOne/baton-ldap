@@ -27,6 +27,8 @@ const (
 	groupMemberUIDFilter        = `(&` + userFilter + `(uid=%s))`
 	groupMemberCommonNameFilter = `(&` + userFilter + `(cn=%s))`
 
+	groupMemberGidNumber = `(&` + userFilter + `(gidNumber=%s))`
+
 	attrGroupCommonName   = "cn"
 	attrGroupIdPosix      = "gidNumber"
 	attrGroupMember       = "member"
@@ -203,7 +205,54 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		rv = append(rv, g)
 	}
 
+	posixGid := ldapGroup.GetEqualFoldAttributeValue(attrGroupIdPosix)
+	if posixGid == "" {
+		return rv, "", nil, nil
+	}
+
+	nextPage := ""
+	for {
+		var userEntries []*ldap3.Entry
+		userEntries, nextPage, err = g.client.LdapSearch(
+			ctx,
+			ldap3.ScopeWholeSubtree,
+			g.userSearchDN,
+			fmt.Sprintf(groupMemberGidNumber, ldap3.EscapeFilter(posixGid)),
+			[]string{"dn"},
+			nextPage, 100,
+		)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("ldap-connector: failed to list group members: %w", err)
+		}
+		for _, userEntry := range userEntries {
+			userDN, err := ldap.CanonicalizeDN(userEntry.DN)
+			if err != nil {
+				l.Error("ldap-connector: invalid user DN", zap.String("user_dn", userEntry.DN), zap.Error(err))
+				continue
+			}
+			g := newGrantFromDN(resource, userDN.String())
+			rv = append(rv, g)
+		}
+		if nextPage == "" {
+			break
+		}
+	}
+
+	rv = uniqueGrants(rv)
+
 	return rv, "", nil, nil
+}
+
+func uniqueGrants(grants []*v2.Grant) []*v2.Grant {
+	seen := make(map[string]struct{})
+	var uniqueGrants []*v2.Grant
+	for _, grant := range grants {
+		if _, ok := seen[grant.Principal.Id.Resource]; !ok {
+			uniqueGrants = append(uniqueGrants, grant)
+			seen[grant.Principal.Id.Resource] = struct{}{}
+		}
+	}
+	return uniqueGrants
 }
 
 // findMember: note this function can return an empty string if the member is not found.
