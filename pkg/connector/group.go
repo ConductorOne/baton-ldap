@@ -206,6 +206,10 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 
 	posixGid := ldapGroup.GetEqualFoldAttributeValue(attrGroupIdPosix)
+	if posixGid == "" {
+		return rv, "", nil, nil
+	}
+
 	nextPage := ""
 	for {
 		var userEntries []*ldap3.Entry
