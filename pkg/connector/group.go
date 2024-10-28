@@ -177,8 +177,14 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		nil,
 	)
 	if err != nil {
-		err := fmt.Errorf("ldap-connector: failed to list group members: %w", err)
-		l.Error("ldap-connector: failed to list group members", zap.Error(err))
+		l.Error("ldap-connector: failed to list group members", zap.String("group_dn", resource.Id.Resource), zap.Error(err))
+
+		// Some LDAP servers lie.
+		if ldap3.IsErrorAnyOf(err, ldap3.LDAPResultNoSuchObject) {
+			return nil, "", nil, nil
+		}
+
+		err := fmt.Errorf("ldap-connector: failed to list group %s members: %w", resource.Id.Resource, err)
 		return nil, "", nil, err
 	}
 
