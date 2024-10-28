@@ -5,7 +5,8 @@ go 1.22.0
 toolchain go1.22.3
 
 require (
-	github.com/conductorone/baton-sdk v0.2.41
+	github.com/conductorone/baton-sdk v0.2.42
+	github.com/deckarep/golang-set/v2 v2.6.0
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.2
@@ -13,7 +14,6 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/openldap v0.33.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
-	google.golang.org/protobuf v1.35.1
 )
 
 require (
@@ -27,7 +27,6 @@ require (
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker v27.1.1+incompatible // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
@@ -53,6 +52,7 @@ require (
 	go.opentelemetry.io/otel v1.31.0 // indirect
 	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
+	google.golang.org/protobuf v1.35.1 // indirect
 )
 
 require (
