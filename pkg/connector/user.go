@@ -193,9 +193,13 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		rs.WithStatus(userStatus),
 	}
 
-	objectClasses := user.GetEqualFoldAttributeValues("objectClass")
+	rawObjectClasses := user.GetEqualFoldAttributeValues("objectClass")
+	objectClasses := make([]string, 0, len(rawObjectClasses))
+	for _, objectClass := range rawObjectClasses {
+		objectClasses = append(objectClasses, strings.ToLower(objectClass))
+	}
 	switch {
-	case slices.Contains(objectClasses, "computer"):
+	case slices.Contains(objectClasses, "computer"), slices.Contains(objectClasses, "msds-managedserviceaccount"):
 		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_SERVICE))
 	case slices.Contains(objectClasses, "person"):
 		userTraitOptions = append(userTraitOptions, rs.WithAccountType(v2.UserTrait_ACCOUNT_TYPE_HUMAN))

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)"
+	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=groupOfNames)(objectClass=posixGroup)(objectClass=group)"
 	groupFilter        = "(|" + groupObjectClasses + ")"
 	groupIdFilter      = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
 
