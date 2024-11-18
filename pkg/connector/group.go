@@ -179,7 +179,8 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	if err != nil {
 		l.Error("ldap-connector: failed to list group members", zap.String("group_dn", resource.Id.Resource), zap.Error(err))
 
-		// Some LDAP servers lie.
+		// Some LDAP servers lie and return a group DN that doesn't actually exist.
+		// Or the group got deleted between List() and Grants().
 		if ldap3.IsErrorAnyOf(err, ldap3.LDAPResultNoSuchObject) {
 			return nil, "", nil, nil
 		}
@@ -225,7 +226,8 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 			g.userSearchDN,
 			fmt.Sprintf(groupMemberGidNumber, ldap3.EscapeFilter(posixGid)),
 			[]string{"dn"},
-			nextPage, 100,
+			nextPage,
+			ResourcesPageSize,
 		)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("ldap-connector: failed to list group members: %w", err)
