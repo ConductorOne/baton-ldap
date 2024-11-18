@@ -1,5 +1,5 @@
 {
-  "source": ["./dist/macos-arm64_darwin_arm64/baton-ldap"],
+  "source": ["./dist/macos-arm64_darwin_arm64_v8.0/baton-ldap"],
   "bundle_id": "com.conductorone.baton-ldap",
   "apple_id": {
     "username" : "justin.gallardo@conductorone.com"
