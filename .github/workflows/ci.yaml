@@ -88,11 +88,27 @@ jobs:
         run: node ./scripts/ldif.js && ls -la
       - name: Import ldif into openldap
         run: ./scripts/import.sh
+      - name: Install baton
+        run: ./scripts/get-baton.sh && mv baton /usr/local/bin
       - name: Build baton-ldap
         run: go build ./cmd/baton-ldap
       - name: Run baton-ldap
         run: ./baton-ldap
-      - name: Revoke grants
-        run: ./baton-ldap --revoke-grant 'group:cn=testgroup00000,dc=example,dc=org:member:user:cn=testuser00099@example.com,dc=example,dc=org' && ./baton-ldap --revoke-grant 'group:cn=othertestgroup00000,dc=example,dc=org:member:user:cn=testuser00099@example.com,dc=example,dc=org'
-      - name: Grant entitlements
-        run: ./baton-ldap --grant-entitlement 'group:cn=testgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00099@example.com,dc=example,dc=org' --grant-principal-type 'user' && ./baton-ldap --grant-entitlement 'group:cn=othertestgroup00000,dc=example,dc=org:member' --grant-principal 'cn=testuser00099@example.com,dc=example,dc=org' --grant-principal-type 'user'
+      - name: List grants
+        run: baton grants
+      - name: Test grant/revoking posixGroup entitlements
+        env:
+          BATON: baton
+          BATON_LDAP: ./baton-ldap
+          BATON_ENTITLEMENT: "group:cn=testgroup00000,dc=example,dc=org:member"
+          BATON_PRINCIPAL: "cn=testuser00099@example.com,dc=example,dc=org"
+          BATON_PRINCIPAL_TYPE: "user"
+        run: ./scripts/grant-revoke.sh
+      - name: Test grant/revoking groupOfUniqueNames entitlements
+        env:
+          BATON: baton
+          BATON_LDAP: ./baton-ldap
+          BATON_ENTITLEMENT: "group:cn=othertestgroup00000,dc=example,dc=org:member"
+          BATON_PRINCIPAL: "cn=testuser00099@example.com,dc=example,dc=org"
+          BATON_PRINCIPAL_TYPE: "user"
+        run: ./scripts/grant-revoke.sh

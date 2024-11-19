@@ -183,13 +183,21 @@ func newGrantFromDN(groupResource *v2.Resource, dn string, resourceType *v2.Reso
 }
 
 func newGrantFromEntry(groupResource *v2.Resource, entry *ldap3.Entry) *v2.Grant {
+	var dn string
+	parsedDN, err := ldap.CanonicalizeDN(entry.DN)
+	if err == nil {
+		dn = parsedDN.String()
+	} else {
+		dn = entry.DN
+	}
+
 	for _, objectClass := range entry.GetAttributeValues("objectClass") {
 		if resourceType, ok := objectClassesToResourceTypes[objectClass]; ok {
-			return newGrantFromDN(groupResource, entry.DN, resourceType)
+			return newGrantFromDN(groupResource, dn, resourceType)
 		}
 	}
 
-	return newGrantFromDN(groupResource, entry.DN, resourceTypeUser)
+	return newGrantFromDN(groupResource, dn, resourceTypeUser)
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
