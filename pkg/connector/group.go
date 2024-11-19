@@ -19,6 +19,17 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+var objectClassesToResourceTypes = map[string]*v2.ResourceType{
+	"group":                resourceTypeGroup,
+	"groupOfNames":         resourceTypeGroup,
+	"groupOfUniqueNames":   resourceTypeGroup,
+	"inetOrgPerson":        resourceTypeUser,
+	"posixGroup":           resourceTypeGroup,
+	"organizationalPerson": resourceTypeUser,
+	"person":               resourceTypeUser,
+	"user":                 resourceTypeUser,
+}
+
 const (
 	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=groupOfNames)(objectClass=posixGroup)(objectClass=group)"
 	groupFilter        = "(|" + groupObjectClasses + ")"
@@ -146,20 +157,39 @@ func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resou
 }
 
 // newGrantFromDN - create a `Grant` from a given group and user distinguished name.
-func newGrantFromDN(resource *v2.Resource, userDN string) *v2.Grant {
+func newGrantFromDN(groupResource *v2.Resource, dn string, resourceType *v2.ResourceType) *v2.Grant {
+	grantOpts := []grant.GrantOption{}
+	if resourceType == resourceTypeGroup {
+		grantOpts = append(grantOpts, grant.WithAnnotation(&v2.GrantExpandable{
+			EntitlementIds: []string{
+				fmt.Sprintf("group:%s:member", dn),
+			},
+		}))
+	}
 	g := grant.NewGrant(
 		// remove group profile from grant so we're not saving all group memberships in every grant
 		&v2.Resource{
-			Id: resource.Id,
+			Id: groupResource.Id,
 		},
 		groupMemberEntitlement,
 		// remove user profile from grant so we're not saving repetitive user info in every grant
 		&v2.ResourceId{
-			ResourceType: resourceTypeUser.Id,
-			Resource:     userDN,
+			ResourceType: resourceType.Id,
+			Resource:     dn,
 		},
+		grantOpts...,
 	)
 	return g
+}
+
+func newGrantFromEntry(groupResource *v2.Resource, entry *ldap3.Entry) *v2.Grant {
+	for _, objectClass := range entry.GetAttributeValues("objectClass") {
+		if resourceType, ok := objectClassesToResourceTypes[objectClass]; ok {
+			return newGrantFromDN(groupResource, entry.DN, resourceType)
+		}
+	}
+
+	return newGrantFromDN(groupResource, entry.DN, resourceTypeUser)
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
@@ -196,7 +226,25 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	for memberId := range memberIDs.Iter() {
 		parsedDN, err := ldap.CanonicalizeDN(memberId)
 		if err == nil {
-			g := newGrantFromDN(resource, parsedDN.String())
+			member, _, err := g.client.LdapSearch(
+				ctx,
+				ldap3.ScopeWholeSubtree,
+				parsedDN,
+				"",
+				nil,
+				"",
+				1,
+			)
+			if err != nil {
+				l.Error("ldap-connector: failed to get group member", zap.String("group", groupDN.String()), zap.String("member_id", memberId), zap.Error(err))
+			}
+			var g *v2.Grant
+			if len(member) == 1 {
+				g = newGrantFromEntry(resource, member[0])
+			} else {
+				// Fall back to creating a grant and assuming it's for a user.
+				g = newGrantFromDN(resource, parsedDN.String(), resourceTypeUser)
+			}
 			rv = append(rv, g)
 			continue
 		}
@@ -208,7 +256,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		if memberDN == "" {
 			continue
 		}
-		g := newGrantFromDN(resource, memberDN)
+		g := newGrantFromDN(resource, memberDN, resourceTypeUser)
 		rv = append(rv, g)
 	}
 
@@ -238,7 +286,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 				l.Error("ldap-connector: invalid user DN", zap.String("user_dn", userEntry.DN), zap.Error(err))
 				continue
 			}
-			g := newGrantFromDN(resource, userDN.String())
+			g := newGrantFromDN(resource, userDN.String(), resourceTypeUser)
 			rv = append(rv, g)
 		}
 		if nextPage == "" {
