@@ -25,6 +25,8 @@ var (
 		field.WithDescription("The DN to search for groups under. Example: 'OU=Groups,DC=baton,DC=example,DC=com'"))
 	roleSearchDNField = field.StringField("role-search-dn",
 		field.WithDescription("The DN to search for roles under. Example: 'OU=Roles,DC=baton,DC=example,DC=com'"))
+	filterField = field.StringField("filter",
+		field.WithDescription("An optional filter to add to all LDAP searches. Example: '(!(objectClass=computer))' will exclude all entries with a computer object class"))
 
 	//revive:disable-next-line:line-length-limit
 	disableOperationalAttrsField = field.BoolField("disable-operational-attrs", field.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
@@ -52,6 +54,7 @@ var ConfigurationFields = []field.SchemaField{
 	roleSearchDNField,
 	insecureSkipVerifyField,
 	disableOperationalAttrsField,
+	filterField,
 }
 
 var ConfigRelations = []field.SchemaFieldRelationship{
@@ -150,6 +153,8 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 		l.Warn("No password supplied. Will try an unauthenticated bind")
 	}
 
+	rv.Filter = v.GetString(filterField.FieldName)
+
 	rv.InsecureSkipVerify = v.GetBool(insecureSkipVerifyField.FieldName)
 	rv.DisableOperationalAttrs = v.GetBool(disableOperationalAttrsField.FieldName)
 
@@ -166,6 +171,8 @@ type Config struct {
 	UserSearchDN  *ldap3.DN
 	GroupSearchDN *ldap3.DN
 	RoleSearchDN  *ldap3.DN
+
+	Filter string
 
 	DisableOperationalAttrs bool
 	InsecureSkipVerify      bool
