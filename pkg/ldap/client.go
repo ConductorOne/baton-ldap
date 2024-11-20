@@ -28,7 +28,8 @@ const (
 )
 
 type Client struct {
-	pool clientPool
+	pool   clientPool
+	filter string
 }
 
 type Entry = ldap.Entry
@@ -148,6 +149,13 @@ func (c *Client) LdapSearch(ctx context.Context,
 	filter string,
 	attrNames []string,
 	pageToken string, pageSize uint32) ([]*ldap.Entry, string, error) {
+	if c.filter != "" {
+		if filter == "" {
+			filter = c.filter
+		} else {
+			filter = fmt.Sprintf("(&(%s)%s)", filter, c.filter)
+		}
+	}
 	return c._ldapSearch(ctx, searchScope, searchDN, filter, attrNames, pageToken, pageSize, 0)
 }
 
@@ -279,7 +287,7 @@ func getConnection(ctx context.Context, serverUrl string, password string, userD
 	return conn, nil
 }
 
-func NewClient(ctx context.Context, serverUrl string, password string, userDN string, insecureSkipVerify bool) (*Client, error) {
+func NewClient(ctx context.Context, serverUrl string, password string, userDN string, insecureSkipVerify bool, filter string) (*Client, error) {
 	_, err := getConnection(ctx, serverUrl, password, userDN, insecureSkipVerify)
 	if err != nil {
 		return nil, err
@@ -310,6 +318,7 @@ func NewClient(ctx context.Context, serverUrl string, password string, userDN st
 	}
 
 	return &Client{
-		pool: pool,
+		pool:   pool,
+		filter: filter,
 	}, nil
 }

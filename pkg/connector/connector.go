@@ -89,7 +89,8 @@ func New(ctx context.Context, cf *config.Config) (*LDAP, error) {
 		cf.ServerURL.String(),
 		cf.BindPassword,
 		cf.BindDN.String(),
-		cf.InsecureSkipVerify)
+		cf.InsecureSkipVerify,
+		cf.Filter)
 	if err != nil {
 		return nil, err
 	}
