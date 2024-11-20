@@ -50,13 +50,15 @@ func isNetworkError(err error) bool {
 func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client *ldapConn) error) error {
 	l := ctxzap.Extract(ctx)
 
+	var err error
 	connectAttempts := 0
 	for connectAttempts < maxConnectAttempts {
 		if connectAttempts > 0 {
 			l.Warn("baton-ldap: retrying connection", zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 			time.Sleep(time.Duration(connectAttempts) * time.Second)
 		}
-		cp, err := c.pool.Acquire(ctx)
+		var cp *puddle.Resource[*ldapConn]
+		cp, err = c.pool.Acquire(ctx)
 		if err != nil {
 			if isNetworkError(err) {
 				l.Warn("baton-ldap: network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
@@ -99,7 +101,7 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 		cp.Release()
 		break
 	}
-	return nil
+	return err
 }
 
 func parsePageToken(pageToken string) (string, []byte, error) {
@@ -172,8 +174,6 @@ func (c *Client) _ldapSearch(ctx context.Context,
 	var ret []*ldap.Entry
 	var nextPageToken string
 
-	// TODO (ggreer): Reconnecting with a pageToken doesn't work because the ldap cookie is per-connection
-	// To fix this, we should restart the query with no pageToken
 	err := c.getConnection(ctx, false, func(client *ldapConn) error {
 		if pageSize <= 0 {
 			pageSize = defaultPageSize
