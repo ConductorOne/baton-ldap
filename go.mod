@@ -5,7 +5,7 @@ go 1.22.0
 toolchain go1.22.3
 
 require (
-	github.com/conductorone/baton-sdk v0.2.58
+	github.com/conductorone/baton-sdk v0.2.61
 	github.com/deckarep/golang-set/v2 v2.6.0
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
