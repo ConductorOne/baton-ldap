@@ -95,7 +95,14 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 			userStatus = v2.UserTrait_Status_STATUS_DISABLED
 		}
 		return userStatus, nil
-	} else if nsAccountLockFlag == "false" {
+	} else if nsAccountLockFlag != "" {
+		locked, _ := strconv.ParseBool(nsAccountLockFlag)
+		if locked {
+			userStatus = v2.UserTrait_Status_STATUS_DISABLED
+		} else {
+			userStatus = v2.UserTrait_Status_STATUS_ENABLED
+		}
+	}
 		userStatus = v2.UserTrait_Status_STATUS_ENABLED
 	} else if nsAccountLockFlag == "true" {
 		userStatus = v2.UserTrait_Status_STATUS_DISABLED
