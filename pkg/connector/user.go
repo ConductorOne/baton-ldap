@@ -41,8 +41,8 @@ const (
 	attrUserAccountControl = "userAccountControl"
 	attrUserLastLogon      = "lastLogonTimestamp"
 
-	// FreeIPA (Red Hat Identity) specific attributes
-	attrNSAccountLock      = "nsAccountLock"
+	// FreeIPA (Red Hat Identity) specific attributes.
+	attrNSAccountLock = "nsAccountLock"
 )
 
 var allAttrs = []string{"*", "+"}
