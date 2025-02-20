@@ -40,6 +40,9 @@ const (
 	attrUserPrincipalName  = "userPrincipalName"
 	attrUserAccountControl = "userAccountControl"
 	attrUserLastLogon      = "lastLogonTimestamp"
+
+	// FreeIPA (Red Hat Identity) specific attributes
+	attrNSAccountLock      = "nsAccountLock"
 )
 
 var allAttrs = []string{"*", "+"}
@@ -75,8 +78,10 @@ func parseUserNames(user *ldap.Entry) (string, string, string) {
 func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 	userStatus := v2.UserTrait_Status_STATUS_UNSPECIFIED
 
-	// Currently only UserAccountControlFlag from Microsoft is supported
+	// Currently only UserAccountControlFlag from Microsoft or nsAccountLock from FreeIPA is supported
 	userAccountControlFlag := user.GetEqualFoldAttributeValue(attrUserAccountControl)
+	nsAccountLockFlag := user.GetEqualFoldAttributeValue(attrNSAccountLock)
+
 	if userAccountControlFlag != "" {
 		userAccountControlFlag, err := strconv.ParseInt(userAccountControlFlag, 10, 64)
 		if err != nil {
@@ -90,7 +95,15 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 			userStatus = v2.UserTrait_Status_STATUS_DISABLED
 		}
 		return userStatus, nil
+	} else if nsAccountLockFlag != "" {
+		locked, _ := strconv.ParseBool(nsAccountLockFlag)
+		if locked {
+			userStatus = v2.UserTrait_Status_STATUS_DISABLED
+		} else {
+			userStatus = v2.UserTrait_Status_STATUS_ENABLED
+		}
 	}
+
 	return userStatus, nil
 }
 
