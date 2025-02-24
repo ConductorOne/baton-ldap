@@ -426,6 +426,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	}
 
 	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
+	principalDNArr := []string{principal.Id.Resource}
 
 	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
@@ -435,14 +436,8 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Add(attrGroupMemberPosix, username)
 	} else if slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "" {
-		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
-		if err != nil {
-			return nil, err
-		}
-		username := []string{dn.RDNs[0].Attributes[0].Value}
-		modifyRequest.Add(attrGroupMember, username)
+		modifyRequest.Add(attrGroupMember, principalDNArr)
 	} else {
-		principalDNArr := []string{principal.Id.Resource}
 		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
 	}
 
