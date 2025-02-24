@@ -471,6 +471,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	}
 
 	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
+	principalDNArr := []string{principal.Id.Resource}
 
 	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
 	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
@@ -481,12 +482,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Delete(attrGroupMemberPosix, username)
 	} else if slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "" {
-		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
-		if err != nil {
-			return nil, err
-		}
-		username := []string{dn.RDNs[0].Attributes[0].Value}
-		modifyRequest.Delete(attrGroupMember, username)
+		modifyRequest.Delete(attrGroupMember, principalDNArr)
 	} else {
 		principalDNArr := []string{principal.Id.Resource}
 		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
