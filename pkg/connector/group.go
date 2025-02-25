@@ -46,6 +46,7 @@ const (
 	attrGroupUniqueMember = "uniqueMember"
 	attrGroupMemberPosix  = "memberUid"
 	attrGroupDescription  = "description"
+	attrGroupObjectGUID   = "objectGUID"
 
 	groupMemberEntitlement = "member"
 )
@@ -424,15 +425,22 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, err
 	}
 
-	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
+	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
+	principalDNArr := []string{principal.Id.Resource}
+
+	switch {
+	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
 			return nil, err
 		}
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Add(attrGroupMemberPosix, username)
-	} else {
-		principalDNArr := []string{principal.Id.Resource}
+
+	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
+		modifyRequest.Add(attrGroupMember, principalDNArr)
+
+	default:
 		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
 	}
 
@@ -465,16 +473,23 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		return nil, err
 	}
 
+	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
+	principalDNArr := []string{principal.Id.Resource}
+
 	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
-	if slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup") {
+	switch {
+	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
 			return nil, err
 		}
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Delete(attrGroupMemberPosix, username)
-	} else {
-		principalDNArr := []string{principal.Id.Resource}
+
+	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
+		modifyRequest.Delete(attrGroupMember, principalDNArr)
+
+	default:
 		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
 	}
 
