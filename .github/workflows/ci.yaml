@@ -83,7 +83,7 @@ jobs:
         with:
           node-version: '21.x'
       - name: Install ldapadd
-        run: sudo apt install ldap-utils
+        run: sudo apt update && sudo apt install ldap-utils
       - name: Create ldif files
         run: node ./scripts/ldif.js && ls -la
       - name: Import ldif into openldap
