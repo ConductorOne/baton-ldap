@@ -1,15 +1,17 @@
 module github.com/conductorone/baton-ldap
 
-go 1.22.0
+go 1.23
 
-toolchain go1.22.3
+toolchain go1.23.6
 
 require (
 	github.com/conductorone/baton-sdk v0.2.61
 	github.com/deckarep/golang-set/v2 v2.6.0
+	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.2
+	github.com/quasilyte/go-ruleguard/dsl v0.3.22
 	github.com/testcontainers/testcontainers-go v0.33.0
 	github.com/testcontainers/testcontainers-go/modules/openldap v0.33.0
 	go.uber.org/zap v1.27.0
@@ -122,7 +124,7 @@ require (
 	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/net v0.30.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
 	golang.org/x/text v0.19.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241015192408-796eee8c2d53 // indirect
