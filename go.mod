@@ -5,7 +5,7 @@ go 1.23.4
 toolchain go1.24.1
 
 require (
-	github.com/conductorone/baton-sdk v0.2.83
+	github.com/conductorone/baton-sdk v0.2.88
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -23,11 +23,11 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/aws/aws-lambda-go v1.47.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.70.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.71.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/conductorone/dpop v0.2.2 // indirect
-	github.com/conductorone/dpop/integrations/dpop_grpc v0.2.2 // indirect
-	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.2.2 // indirect
+	github.com/conductorone/dpop v0.2.3 // indirect
+	github.com/conductorone/dpop/integrations/dpop_grpc v0.2.3 // indirect
+	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.2.3 // indirect
 	github.com/containerd/containerd v1.7.18 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -40,7 +40,7 @@ require (
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gammazero/deque v1.0.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.0.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -58,6 +58,8 @@ require (
 	github.com/opencontainers/image-spec v1.1.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/pquerna/cachecontrol v0.2.0 // indirect
+	github.com/pquerna/xjwt/xkeyset v0.0.0-20241217022915-10fc997b2a9f // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cobra v1.8.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
@@ -135,14 +137,14 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/ratelimit v0.3.1 // indirect
-	golang.org/x/crypto v0.34.0 // indirect
-	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/oauth2 v0.26.0 // indirect
-	golang.org/x/sync v0.11.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250219182151-9fdb1cabc7b2 // indirect
-	google.golang.org/grpc v1.70.0 // indirect
+	golang.org/x/crypto v0.36.0 // indirect
+	golang.org/x/net v0.36.0 // indirect
+	golang.org/x/oauth2 v0.28.0 // indirect
+	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
+	google.golang.org/grpc v1.71.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
