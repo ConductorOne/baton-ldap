@@ -307,6 +307,51 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 	return rv, pageToken, nil, nil
 }
 
+func (u *userResourceType) Get(ctx context.Context, resourceId *v2.ResourceId, parentResourceId *v2.ResourceId) (*v2.Resource, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("getting user", zap.String("resource_id", resourceId.Resource))
+
+	userDN, err := ldap.CanonicalizeDN(resourceId.Resource)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to canonicalize user DN: %w", err)
+	}
+
+	userEntries, _, err := u.client.LdapSearch(ctx, ldap3.ScopeBaseObject, userDN, userFilter, allAttrs, "", ResourcesPageSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+
+	if len(userEntries) == 0 {
+		return nil, nil, fmt.Errorf("ldap-connector: user not found")
+	}
+
+	userEntry := userEntries[0]
+
+	ur, err := userResource(ctx, userEntry)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+
+	return ur, nil, nil
+}
+
+func (u *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("deleting user", zap.String("resource_id", resourceId.Resource))
+
+	userDN := resourceId.Resource
+
+	deleteRequest := &ldap3.DelRequest{DN: userDN}
+	err := u.client.LdapDelete(ctx, deleteRequest)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to delete user: %w", err)
+	}
+
+	return nil, nil
+}
+
 func (u *userResourceType) Entitlements(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	return nil, "", nil, nil
 }
