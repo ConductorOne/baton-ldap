@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/jackc/puddle/v2"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type ldapConn struct {
@@ -211,6 +214,11 @@ func (c *Client) _ldapSearch(ctx context.Context,
 			Controls:     []ldap.Control{pagingControl},
 		})
 		if err != nil {
+			if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+				notFoundError := status.Errorf(codes.NotFound, "baton-ldap: no such object")
+				l.Warn("baton-ldap: no such object", zap.Error(err), zap.String("search_dn", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
+				return errors.Join(notFoundError, err)
+			}
 			l.Error("baton-ldap: client failed to search", zap.Error(err))
 			return err
 		}
