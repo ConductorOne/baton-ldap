@@ -341,10 +341,13 @@ func (u *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId
 
 	l.Debug("deleting user", zap.String("resource_id", resourceId.Resource))
 
-	userDN := resourceId.Resource
+	userDN, err := ldap.CanonicalizeDN(resourceId.Resource)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to canonicalize user DN: %w", err)
+	}
 
-	deleteRequest := &ldap3.DelRequest{DN: userDN}
-	err := u.client.LdapDelete(ctx, deleteRequest)
+	deleteRequest := &ldap3.DelRequest{DN: userDN.String()}
+	err = u.client.LdapDelete(ctx, deleteRequest)
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to delete user: %w", err)
 	}
