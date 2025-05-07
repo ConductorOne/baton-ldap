@@ -253,6 +253,22 @@ func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyReque
 	return nil
 }
 
+func (c *Client) LdapDelete(ctx context.Context, deleteRequest *ldap.DelRequest) error {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("deleting ldap entry", zap.String("DN", deleteRequest.DN))
+
+	err := c.getConnection(ctx, true, func(client *ldapConn) error {
+		return client.conn.Del(deleteRequest)
+	})
+	if err != nil {
+		l.Error("baton-ldap: client failed to delete record", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func TestConnection(url string, insecureSkipVerify bool) (*ldap.Conn, error) {
 	dialOpts := ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: insecureSkipVerify}) // #nosec G402
 	conn, err := ldap.DialURL(url, dialOpts)
