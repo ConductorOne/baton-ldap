@@ -224,6 +224,23 @@ func MakeMainCommand[T field.Configurable](
 					connectorrunner.WithTargetedSyncResourceIDs(v.GetStringSlice("sync-resources")),
 					connectorrunner.WithOnDemandSync(v.GetString("file")),
 				)
+			case v.GetBool("diff-syncs"):
+				opts = append(opts,
+					connectorrunner.WithDiffSyncs(
+						v.GetString("file"),
+						v.GetString("base-sync-id"),
+						v.GetString("applied-sync-id"),
+					),
+				)
+			case v.GetBool("compact-syncs"):
+				opts = append(opts,
+					connectorrunner.WithSyncCompactor(
+						v.GetString("compact-output-path"),
+						v.GetStringSlice("compact-file-paths"),
+						v.GetStringSlice("compact-sync-ids"),
+					),
+				)
+
 			default:
 				opts = append(opts, connectorrunner.WithOnDemandSync(v.GetString("file")))
 			}

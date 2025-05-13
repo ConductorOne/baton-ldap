@@ -5,7 +5,7 @@ go 1.23.4
 toolchain go1.24.1
 
 require (
-	github.com/conductorone/baton-sdk v0.3.0
+	github.com/conductorone/baton-sdk v0.3.6
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -148,7 +148,7 @@ require (
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250303144028-a0af3efb3deb // indirect
-	google.golang.org/grpc v1.71.0 // indirect
+	google.golang.org/grpc v1.71.0
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
