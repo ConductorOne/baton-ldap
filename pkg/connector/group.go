@@ -73,9 +73,15 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 	groupDN := gdn.String()
 	groupId := parseValue(group, []string{attrGroupIdPosix})
+	description := group.GetEqualFoldAttributeValue(attrGroupDescription)
 	profile := map[string]interface{}{
-		"group_description": group.GetEqualFoldAttributeValue(attrGroupDescription),
-		"path":              groupDN,
+		"path": groupDN,
+	}
+
+	groupRsTraitOptions := []rs.ResourceOption{}
+	if description != "" {
+		profile["group_description"] = description
+		groupRsTraitOptions = append(groupRsTraitOptions, rs.WithDescription(description))
 	}
 
 	if groupId != "" {
@@ -93,6 +99,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 		resourceTypeGroup,
 		groupDN,
 		groupTraitOptions,
+		groupRsTraitOptions...,
 	)
 	if err != nil {
 		return nil, err
@@ -136,6 +143,35 @@ func (g *groupResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagi
 	}
 
 	return rv, pageToken, nil, nil
+}
+
+func (g *groupResourceType) Get(ctx context.Context, resourceId *v2.ResourceId, parentResourceId *v2.ResourceId) (*v2.Resource, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("getting group", zap.String("resource_id", resourceId.Resource))
+
+	groupDN, err := ldap.CanonicalizeDN(resourceId.Resource)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to canonicalize group DN: %w", err)
+	}
+
+	groupEntries, _, err := g.client.LdapSearch(ctx, ldap3.ScopeBaseObject, groupDN, groupFilter, allAttrs, "", ResourcesPageSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to get group: %w", err)
+	}
+
+	if len(groupEntries) == 0 {
+		return nil, nil, fmt.Errorf("ldap-connector: group not found")
+	}
+
+	groupEntry := groupEntries[0]
+
+	gr, err := groupResource(ctx, groupEntry)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to get group: %w", err)
+	}
+
+	return gr, nil, nil
 }
 
 func (g *groupResourceType) Entitlements(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
