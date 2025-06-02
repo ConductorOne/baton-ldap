@@ -172,14 +172,6 @@ func (c *Client) LdapSearch(ctx context.Context,
 	filter string,
 	attrNames []string,
 	pageToken string, pageSize uint32) ([]*ldap.Entry, string, error) {
-	if c.filter != "" {
-		if filter == "" {
-			filter = c.filter
-		} else {
-			filter = fmt.Sprintf("(&(%s)%s)", filter, c.filter)
-		}
-	}
-
 	var baseDN string
 	if searchDN != nil {
 		baseDN = searchDN.String()
@@ -243,8 +235,6 @@ func (c *Client) _ldapSearch(ctx context.Context,
 		baseDN := searchDN
 
 		l.Debug("searching for ldap entries", zap.String("search_dn", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
-
-		fmt.Println("baseDN: ", baseDN)
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
 			BaseDN:       baseDN,
