@@ -148,6 +148,24 @@ func (c *Client) LdapGet(ctx context.Context,
 	return entries[0], nil
 }
 
+func (c *Client) LdapGetWithStringDN(ctx context.Context,
+	searchDN string,
+	filter string,
+	attrNames []string,
+) (*ldap.Entry, error) {
+	entries, _, err := c.LdapSearchWithStringDN(ctx, ldap.ScopeBaseObject, searchDN, filter, attrNames, "", 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("entry not found: %s", searchDN)
+	}
+	if len(entries) > 1 {
+		return nil, fmt.Errorf("multiple entries found: %s", searchDN)
+	}
+	return entries[0], nil
+}
+
 func (c *Client) LdapSearch(ctx context.Context,
 	searchScope int,
 	searchDN *ldap.DN,
@@ -161,12 +179,35 @@ func (c *Client) LdapSearch(ctx context.Context,
 			filter = fmt.Sprintf("(&(%s)%s)", filter, c.filter)
 		}
 	}
+
+	var baseDN string
+	if searchDN != nil {
+		baseDN = searchDN.String()
+	}
+
+	return c._ldapSearch(ctx, searchScope, baseDN, filter, attrNames, pageToken, pageSize, 0)
+}
+
+func (c *Client) LdapSearchWithStringDN(ctx context.Context,
+	searchScope int,
+	searchDN string,
+	filter string,
+	attrNames []string,
+	pageToken string, pageSize uint32) ([]*ldap.Entry, string, error) {
+	if c.filter != "" {
+		if filter == "" {
+			filter = c.filter
+		} else {
+			filter = fmt.Sprintf("(&(%s)%s)", filter, c.filter)
+		}
+	}
+
 	return c._ldapSearch(ctx, searchScope, searchDN, filter, attrNames, pageToken, pageSize, 0)
 }
 
 func (c *Client) _ldapSearch(ctx context.Context,
 	searchScope int,
-	searchDN *ldap.DN,
+	searchDN string,
 	filter string,
 	attrNames []string,
 	pageToken string,
@@ -198,12 +239,12 @@ func (c *Client) _ldapSearch(ctx context.Context,
 		if filter == "" {
 			filter = "(objectClass=*)"
 		}
-		var baseDN string
-		if searchDN != nil {
-			baseDN = searchDN.String()
-		}
+
+		baseDN := searchDN
 
 		l.Debug("searching for ldap entries", zap.String("search_dn", baseDN), zap.String("filter", filter), zap.Strings("attrNames", attrNames))
+
+		fmt.Println("baseDN: ", baseDN)
 
 		resp, err := client.conn.Search(&ldap.SearchRequest{
 			BaseDN:       baseDN,
@@ -235,7 +276,7 @@ func (c *Client) _ldapSearch(ctx context.Context,
 		// LDAP page tokens don't persist across connections. Retry with no page token if that's the case.
 		// This restarts a search from scratch, but baton-SDK will upsert instead of conflicting.
 		if attempts == 0 && pageToken != "" && ldap.IsErrorAnyOf(err, ldap.LDAPResultUnwillingToPerform) {
-			l.Info("Retrying search without page token", zap.Error(err), zap.String("filter", filter), zap.String("search_dn", searchDN.String()))
+			l.Info("Retrying search without page token", zap.Error(err), zap.String("filter", filter), zap.String("search_dn", searchDN))
 			return c._ldapSearch(ctx, searchScope, searchDN, filter, attrNames, "", pageSize, attempts+1)
 		}
 		l.Error("baton-ldap: client failed to get connection", zap.Error(err))

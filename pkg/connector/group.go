@@ -79,6 +79,9 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	groupRsTraitOptions := []rs.ResourceOption{}
+	groupRsTraitOptions = append(groupRsTraitOptions, rs.WithExternalID(&v2.ExternalId{
+		Id: group.DN,
+	}))
 	if description != "" {
 		profile["group_description"] = description
 		groupRsTraitOptions = append(groupRsTraitOptions, rs.WithDescription(description))
@@ -245,12 +248,24 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 	l = l.With(zap.Stringer("group_dn", groupDN))
 
-	ldapGroup, err := g.client.LdapGet(
-		ctx,
-		groupDN,
-		groupFilter,
-		nil,
-	)
+	var ldapGroup *ldap3.Entry
+	externalId := resource.GetExternalId()
+	if externalId != nil {
+		ldapGroup, err = g.client.LdapGetWithStringDN(
+			ctx,
+			externalId.Id,
+			groupFilter,
+			nil,
+		)
+	} else {
+		ldapGroup, err = g.client.LdapGet(
+			ctx,
+			groupDN,
+			groupFilter,
+			nil,
+		)
+	}
+
 	if err != nil {
 		l.Error("ldap-connector: failed to list group members", zap.String("group_dn", resource.Id.Resource), zap.Error(err))
 
