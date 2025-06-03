@@ -177,7 +177,7 @@ func (c *Client) LdapSearch(ctx context.Context,
 		baseDN = searchDN.String()
 	}
 
-	return c._ldapSearch(ctx, searchScope, baseDN, filter, attrNames, pageToken, pageSize, 0)
+	return c.LdapSearchWithStringDN(ctx, searchScope, baseDN, filter, attrNames, pageToken, pageSize)
 }
 
 func (c *Client) LdapSearchWithStringDN(ctx context.Context,
