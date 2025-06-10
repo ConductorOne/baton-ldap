@@ -250,17 +250,17 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 
 	var ldapGroup *ldap3.Entry
 	externalId := resource.GetExternalId()
-	if externalId != nil {
-		ldapGroup, err = g.client.LdapGetWithStringDN(
+	if externalId == nil {
+		ldapGroup, err = g.client.LdapGet(
 			ctx,
-			externalId.Id,
+			groupDN,
 			groupFilter,
 			nil,
 		)
 	} else {
-		ldapGroup, err = g.client.LdapGet(
+		ldapGroup, err = g.client.LdapGetWithStringDN(
 			ctx,
-			groupDN,
+			externalId.Id,
 			groupFilter,
 			nil,
 		)
