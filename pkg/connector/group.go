@@ -79,6 +79,9 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	}
 
 	groupRsTraitOptions := []rs.ResourceOption{}
+	groupRsTraitOptions = append(groupRsTraitOptions, rs.WithExternalID(&v2.ExternalId{
+		Id: group.DN,
+	}))
 	if description != "" {
 		profile["group_description"] = description
 		groupRsTraitOptions = append(groupRsTraitOptions, rs.WithDescription(description))
@@ -245,12 +248,19 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 	l = l.With(zap.Stringer("group_dn", groupDN))
 
-	ldapGroup, err := g.client.LdapGet(
-		ctx,
-		groupDN,
-		groupFilter,
-		nil,
-	)
+	var ldapGroup *ldap3.Entry
+	externalId := resource.GetExternalId()
+	if externalId == nil {
+		ldapGroup, err = g.client.LdapGet(
+			ctx,
+			groupDN,
+			groupFilter,
+			nil,
+		)
+	} else {
+		ldapGroup, err = g.getGroupWithFallback(ctx, l, groupDN, externalId)
+	}
+
 	if err != nil {
 		l.Error("ldap-connector: failed to list group members", zap.String("group_dn", resource.Id.Resource), zap.Error(err))
 
@@ -342,6 +352,27 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	rv = uniqueGrants(rv)
 
 	return rv, "", nil, nil
+}
+
+func (g *groupResourceType) getGroupWithFallback(ctx context.Context, l *zap.Logger, groupDN *ldap3.DN, externalId *v2.ExternalId) (*ldap3.Entry, error) {
+	ldapGroup, err := g.client.LdapGetWithStringDN(
+		ctx,
+		externalId.Id,
+		groupFilter,
+		nil,
+	)
+
+	if err != nil && ldap3.IsErrorAnyOf(err, ldap3.LDAPResultNoSuchObject) {
+		l.Info("ldap-connector: failed to get group by raw DN, using fallback", zap.String("raw_dn", externalId.Id), zap.Error(err))
+		return g.client.LdapGet(
+			ctx,
+			groupDN,
+			groupFilter,
+			nil,
+		)
+	}
+
+	return ldapGroup, err
 }
 
 func uniqueGrants(grants []*v2.Grant) []*v2.Grant {
