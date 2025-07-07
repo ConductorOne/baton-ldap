@@ -63,7 +63,6 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 }
 
 func schema() *v2.ConnectorAccountCreationSchema {
-	enabled := false
 	return &v2.ConnectorAccountCreationSchema{
 		FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 			"commonName": {
@@ -90,18 +89,6 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Order:       3,
 				Placeholder: "DC=baton-dev,DC=d2,DC=ductone,DC=com",
 			},
-			"enabled": {
-				DisplayName: "Enabled",
-				Required:    false,
-				Description: "Should user be enabled at creation?",
-				Order:       4,
-				Placeholder: "true",
-				Field: &v2.ConnectorAccountCreationSchema_Field_BoolField{
-					BoolField: &v2.ConnectorAccountCreationSchema_BoolField{
-						DefaultValue: &enabled,
-					},
-				},
-			},
 			"objectClass": {
 				DisplayName: "Object Class(es)",
 				Required:    true,
@@ -119,7 +106,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Required:    false,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_MapField{},
 				Description: "A map representing additional attributes to set on the user",
-				Order:       8,
+				Order:       6,
 				Placeholder: "{\"company\":\"Conductor One\"}",
 			},
 		},
