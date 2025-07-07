@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/builder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -361,6 +362,111 @@ func (u *userResourceType) Entitlements(ctx context.Context, resource *v2.Resour
 
 func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	return nil, "", nil, nil
+}
+
+func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
+	return &v2.CredentialDetailsAccountProvisioning{
+		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
+		},
+		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
+	}, nil, nil
+}
+
+func (o *userResourceType) CreateAccount(
+	ctx context.Context,
+	accountInfo *v2.AccountInfo,
+	credentialOptions *v2.CredentialOptions,
+) (
+	builder.CreateAccountResponse,
+	[]*v2.PlaintextData,
+	annotations.Annotations,
+	error,
+) {
+	l := ctxzap.Extract(ctx)
+
+	if credentialOptions == nil {
+		return nil, nil, nil, fmt.Errorf("baton-active-directory: create-account: missing credential options")
+	}
+
+	dn, uac, attrs, err := extractProfile(ctx, accountInfo)
+	if err != nil {
+		l.Error("baton-active-directory: create-account failed to extract profile", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+
+	// Active Directory doesn't allow creating an account with a password. We have to ldapmodify it afterwards.
+	uac = uac.set(noPasswordNeeded)
+
+	var ptds []*v2.PlaintextData
+	switch credentialOptions.Options.(type) {
+	case *v2.CredentialOptions_RandomPassword_:
+	case *v2.CredentialOptions_NoPassword_:
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported credential options %v", credentialOptions)
+	}
+
+	attrs = append(attrs, ldap.Attribute{
+		Type: attrUserAccountControl,
+		Vals: []string{uac.String()},
+	})
+	user := &ldap.AddRequest{
+		DN:         dn,
+		Attributes: attrs,
+	}
+
+	err = o.client.LdapAdd(ctx, user)
+	if err != nil {
+		l.Error("baton-active-directory: create-account failed to create account", zap.Error(err), zap.Any("userParams", user))
+		return nil, nil, nil, err
+	}
+
+	acc, err := getAccount(ctx, o.client, user.DN)
+	if err != nil {
+		l.Error("baton-active-directory: create-account failed to get account", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+
+	if credentialOptions.GetRandomPassword() != nil {
+		plainTextPassword, err := crypto.GeneratePassword(credentialOptions)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		ptds = []*v2.PlaintextData{
+			{
+				Name:  "password",
+				Bytes: []byte(plainTextPassword),
+			},
+		}
+		encodedPassword := EncodeUnicodePwd(plainTextPassword)
+		uac = uac.clear(noPasswordNeeded)
+		req := ldap.NewModifyRequest(acc.DN, nil)
+		req.Replace("unicodePwd", []string{string(encodedPassword)})
+		req.Replace(attrUserAccountControl, []string{uac.String()})
+		err = o.client.LdapModify(ctx, req)
+		if err != nil {
+			l.Error("baton-active-directory: create-account failed to set password", zap.Error(err), zap.Any("accountInfo", accountInfo))
+			return nil, nil, nil, err
+		}
+
+		acc, err = getAccount(ctx, o.client, user.DN)
+		if err != nil {
+			l.Error("baton-active-directory: create-account failed to get account", zap.Error(err), zap.Any("accountInfo", accountInfo))
+			return nil, nil, nil, err
+		}
+	}
+
+	ur, err := userResource(ctx, o.client, acc)
+	if err != nil {
+		l.Error("baton-active-directory: create-account failed to create resource", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+	resp := &v2.CreateAccountResponse_SuccessResult{
+		Resource: ur,
+	}
+
+	return resp, ptds, nil, nil
 }
 
 func userBuilder(client *ldap.Client, userSearchDN *ldap3.DN, disableOperationalAttrs bool) *userResourceType {

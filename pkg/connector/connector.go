@@ -57,7 +57,73 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 		DisplayName: "LDAP",
 		// TODO: add better description
 		Description: "LDAP connector for Baton",
+
+		AccountCreationSchema: schema(),
 	}, nil
+}
+
+func schema() *v2.ConnectorAccountCreationSchema {
+	enabled := false
+	return &v2.ConnectorAccountCreationSchema{
+		FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
+			"commonName": {
+				DisplayName: "Common Name",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The common name of the user",
+				Placeholder: "JaneDoe",
+				Order:       1,
+			},
+			"organizationalUnit": {
+				DisplayName: "Organizational Unit",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The organizational unit (OU) to create the user in",
+				Order:       2,
+				Placeholder: "OU=Users,OU=BATON-DEV",
+			},
+			"domain": {
+				DisplayName: "Domain",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The full domain to create the user in. Will be used to create the DN",
+				Order:       3,
+				Placeholder: "DC=baton-dev,DC=d2,DC=ductone,DC=com",
+			},
+			"enabled": {
+				DisplayName: "Enabled",
+				Required:    false,
+				Description: "Should user be enabled at creation?",
+				Order:       4,
+				Placeholder: "true",
+				Field: &v2.ConnectorAccountCreationSchema_Field_BoolField{
+					BoolField: &v2.ConnectorAccountCreationSchema_BoolField{
+						DefaultValue: &enabled,
+					},
+				},
+			},
+			"objectClass": {
+				DisplayName: "Object Class(es)",
+				Required:    true,
+				Description: "A list of Object Classes to apply to the user, e.g. person, user, etc.",
+				Field: &v2.ConnectorAccountCreationSchema_Field_StringListField{
+					StringListField: &v2.ConnectorAccountCreationSchema_StringListField{
+						DefaultValue: []string{"user"},
+					},
+				},
+				Order:       5,
+				Placeholder: "[\"user\"]",
+			},
+			"additionalAttributes": {
+				DisplayName: "Additional Attributes",
+				Required:    false,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_MapField{},
+				Description: "A map representing additional attributes to set on the user",
+				Order:       8,
+				Placeholder: "{\"company\":\"Conductor One\"}",
+			},
+		},
+	}
 }
 
 // Validates that the user has read access to all relevant tables (more information in the readme).
