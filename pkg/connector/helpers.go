@@ -151,26 +151,34 @@ func toAttr(k string, v interface{}) ldap.Attribute {
 func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, []ldap.Attribute, error) {
 	l := ctxzap.Extract(ctx)
 
+	name := accountInfo.GetLogin()
+
 	prof := accountInfo.GetProfile()
 	if prof == nil {
 		return "", nil, fmt.Errorf("missing profile")
 	}
 	data := prof.AsMap()
-	l.Debug("baton-active-directory: create-account profile", zap.Any("data", data))
+	l.Debug("baton-ldap: create-account profile", zap.Any("data", data))
 
-	domain, ok := data["domain"].(string)
+	suffix, ok := data["suffix"].(string)
 	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing domain")
+		return "", nil, fmt.Errorf("invalid/missing suffix")
 	}
-	ou, ok := data["organizationalUnit"].(string)
+	path, ok := data["path"].(string)
 	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing organizationalUnit")
+		return "", nil, fmt.Errorf("invalid/missing path")
 	}
-	name, ok := data["commonName"].(string)
+	rdnKey, ok := data["rdnKey"].(string)
 	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing commonName")
+		return "", nil, fmt.Errorf("invalid/missing rdnKey")
 	}
-	dn := strings.Join([]string{fmt.Sprintf("cn=%s", name), ou, domain}, ",")
+
+	var dn string
+	if path != "" {
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, name), path, suffix}, ",")
+	} else {
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, name), suffix}, ",")
+	}
 
 	objectClass, ok := data["objectClass"].([]any)
 	if !ok {
@@ -187,9 +195,10 @@ func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, [
 	for k, v := range data {
 		if slices.Contains([]string{
 			"additionalAttributes",
-			"commonName",
-			"domain",
-			"organizationalUnit",
+			"rdnKey",
+			"path",
+			"suffix",
+			"login",
 		}, k) {
 			continue
 		}

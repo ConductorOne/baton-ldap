@@ -65,29 +65,29 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 func schema() *v2.ConnectorAccountCreationSchema {
 	return &v2.ConnectorAccountCreationSchema{
 		FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
-			"commonName": {
-				DisplayName: "Common Name",
+			"rdnKey": {
+				DisplayName: "RDN Key",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
-				Description: "The common name of the user",
-				Placeholder: "JaneDoe",
+				Description: "The RDN key to use for the user.",
+				Placeholder: "cn, uid, etc.",
 				Order:       1,
 			},
-			"organizationalUnit": {
-				DisplayName: "Organizational Unit",
+			"path": {
+				DisplayName: "Path",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
-				Description: "The organizational unit (OU) to create the user in",
-				Order:       2,
+				Description: "The path to create the user in.",
+				Order:       3,
 				Placeholder: "OU=Users,OU=BATON-DEV",
 			},
-			"domain": {
-				DisplayName: "Domain",
+			"suffix": {
+				DisplayName: "Suffix",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
-				Description: "The full domain to create the user in. Will be used to create the DN",
-				Order:       3,
-				Placeholder: "DC=baton-dev,DC=d2,DC=ductone,DC=com",
+				Description: "The top level entry DN (naming context) to create the user in.",
+				Order:       4,
+				Placeholder: "DC=d2,DC=ductone,DC=com",
 			},
 			"objectClass": {
 				DisplayName: "Object Class(es)",
@@ -99,7 +99,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 					},
 				},
 				Order:       5,
-				Placeholder: "[\"user\"]",
+				Placeholder: "[\"top\", \"person\", \"organizationalPerson\", \"inetOrgPerson\"]",
 			},
 			"additionalAttributes": {
 				DisplayName: "Additional Attributes",
