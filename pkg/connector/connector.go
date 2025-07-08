@@ -87,7 +87,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
 				Description: "The path to create the user in.",
 				Order:       3,
-				Placeholder: "OU=Users,OU=BATON-DEV",
+				Placeholder: "ou=users",
 			},
 			"suffix": {
 				DisplayName: "Suffix",
@@ -95,7 +95,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
 				Description: "The top level entry DN (naming context) to create the user in.",
 				Order:       4,
-				Placeholder: "DC=d2,DC=ductone,DC=com",
+				Placeholder: "dc=example,dc=org",
 			},
 			"objectClass": {
 				DisplayName: "Object Class(es)",
@@ -103,7 +103,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Description: "A list of Object Classes to apply to the user, e.g. person, user, etc.",
 				Field: &v2.ConnectorAccountCreationSchema_Field_StringListField{
 					StringListField: &v2.ConnectorAccountCreationSchema_StringListField{
-						DefaultValue: []string{"user"},
+						DefaultValue: []string{"top", "person"},
 					},
 				},
 				Order:       5,
@@ -115,7 +115,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Field:       &v2.ConnectorAccountCreationSchema_Field_MapField{},
 				Description: "A map representing additional attributes to set on the user",
 				Order:       6,
-				Placeholder: "{\"company\":\"Conductor One\"}",
+				Placeholder: "{\"cn\":\"Jane Doe\",\"sn\":\"Doe\"}",
 			},
 		},
 	}
