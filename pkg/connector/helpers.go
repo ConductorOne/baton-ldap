@@ -151,8 +151,6 @@ func toAttr(k string, v interface{}) ldap.Attribute {
 func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, []ldap.Attribute, error) {
 	l := ctxzap.Extract(ctx)
 
-	name := accountInfo.GetLogin()
-
 	prof := accountInfo.GetProfile()
 	if prof == nil {
 		return "", nil, fmt.Errorf("missing profile")
@@ -172,12 +170,16 @@ func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, [
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing rdnKey")
 	}
+	rdnValue, ok := data["rdnValue"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing rdnValue")
+	}
 
 	var dn string
 	if path != "" {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, name), path, suffix}, ",")
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), path, suffix}, ",")
 	} else {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, name), suffix}, ",")
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), suffix}, ",")
 	}
 
 	objectClass, ok := data["objectClass"].([]any)
@@ -196,6 +198,7 @@ func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, [
 		if slices.Contains([]string{
 			"additionalAttributes",
 			"rdnKey",
+			"rdnValue",
 			"path",
 			"suffix",
 			"login",

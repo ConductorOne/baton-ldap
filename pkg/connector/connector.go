@@ -73,6 +73,14 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Placeholder: "cn, uid, etc.",
 				Order:       1,
 			},
+			"rdnValue": {
+				DisplayName: "RDN Value",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The RDN value to use for the user.",
+				Placeholder: "JaneDoe",
+				Order:       2,
+			},
 			"path": {
 				DisplayName: "Path",
 				Required:    true,
