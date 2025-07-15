@@ -57,7 +57,68 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 		DisplayName: "LDAP",
 		// TODO: add better description
 		Description: "LDAP connector for Baton",
+
+		AccountCreationSchema: schema(),
 	}, nil
+}
+
+func schema() *v2.ConnectorAccountCreationSchema {
+	return &v2.ConnectorAccountCreationSchema{
+		FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
+			"rdnKey": {
+				DisplayName: "RDN Key",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The RDN key to use for the user.",
+				Placeholder: "cn, uid, etc.",
+				Order:       1,
+			},
+			"rdnValue": {
+				DisplayName: "RDN Value",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The RDN value to use for the user.",
+				Placeholder: "JaneDoe",
+				Order:       2,
+			},
+			"path": {
+				DisplayName: "Path",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The path to create the user in.",
+				Order:       3,
+				Placeholder: "ou=users",
+			},
+			"suffix": {
+				DisplayName: "Suffix",
+				Required:    true,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
+				Description: "The top level entry DN (naming context) to create the user in.",
+				Order:       4,
+				Placeholder: "dc=example,dc=org",
+			},
+			"objectClass": {
+				DisplayName: "Object Class(es)",
+				Required:    true,
+				Description: "A list of Object Classes to apply to the user, e.g. person, user, etc.",
+				Field: &v2.ConnectorAccountCreationSchema_Field_StringListField{
+					StringListField: &v2.ConnectorAccountCreationSchema_StringListField{
+						DefaultValue: []string{"top", "person"},
+					},
+				},
+				Order:       5,
+				Placeholder: "[\"top\", \"person\", \"organizationalPerson\", \"inetOrgPerson\"]",
+			},
+			"additionalAttributes": {
+				DisplayName: "Additional Attributes",
+				Required:    false,
+				Field:       &v2.ConnectorAccountCreationSchema_Field_MapField{},
+				Description: "A map representing additional attributes to set on the user",
+				Order:       6,
+				Placeholder: "{\"cn\":\"Jane Doe\",\"sn\":\"Doe\"}",
+			},
+		},
+	}
 }
 
 // Validates that the user has read access to all relevant tables (more information in the readme).

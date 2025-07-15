@@ -277,6 +277,22 @@ func (c *Client) _ldapSearch(ctx context.Context,
 	return ret, nextPageToken, nil
 }
 
+func (c *Client) LdapAdd(ctx context.Context, addRequest *ldap.AddRequest) error {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("adding ldap entry", zap.String("DN", addRequest.DN), zap.Any("attributes", addRequest.Attributes))
+
+	err := c.getConnection(ctx, true, func(client *ldapConn) error {
+		return client.conn.Add(addRequest)
+	})
+	if err != nil {
+		l.Error("baton-ldap: client failed to add record", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
 	l := ctxzap.Extract(ctx)
 

@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	builder "github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -361,6 +362,74 @@ func (u *userResourceType) Entitlements(ctx context.Context, resource *v2.Resour
 
 func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	return nil, "", nil, nil
+}
+
+func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
+	return &v2.CredentialDetailsAccountProvisioning{
+		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+		},
+		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+	}, nil, nil
+}
+
+func (o *userResourceType) CreateAccount(
+	ctx context.Context,
+	accountInfo *v2.AccountInfo,
+	credentialOptions *v2.CredentialOptions,
+) (
+	builder.CreateAccountResponse,
+	[]*v2.PlaintextData,
+	annotations.Annotations,
+	error,
+) {
+	l := ctxzap.Extract(ctx)
+
+	if credentialOptions == nil {
+		return nil, nil, nil, fmt.Errorf("baton-ldap: create-account: missing credential options")
+	}
+
+	dn, attrs, err := extractProfile(ctx, accountInfo)
+	if err != nil {
+		l.Error("baton-ldap: create-account failed to extract profile", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+
+	user := &ldap3.AddRequest{
+		DN:         dn,
+		Attributes: attrs,
+	}
+
+	err = o.client.LdapAdd(ctx, user)
+	if err != nil {
+		l.Error("baton-ldap: create-account failed to create account", zap.Error(err), zap.Any("userParams", user))
+		return nil, nil, nil, err
+	}
+
+	acc, err := getAccount(ctx, o.client, dn)
+	if err != nil {
+		l.Error("baton-ldap: create-account failed to get account", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+
+	ur, err := userResource(ctx, acc)
+	if err != nil {
+		l.Error("baton-ldap: create-account failed to create resource", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+	resp := &v2.CreateAccountResponse_SuccessResult{
+		Resource: ur,
+	}
+
+	return resp, nil, nil, nil
+}
+
+func getAccount(ctx context.Context, client *ldap.Client, dn string) (*ldap.Entry, error) {
+	userEntry, err := client.LdapGetWithStringDN(ctx, dn, userFilter, allAttrs)
+	if err != nil {
+		return nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+	return userEntry, nil
 }
 
 func userBuilder(client *ldap.Client, userSearchDN *ldap3.DN, disableOperationalAttrs bool) *userResourceType {

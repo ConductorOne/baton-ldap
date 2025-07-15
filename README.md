@@ -44,6 +44,14 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 
 Use `baton-ldap --help` to see all configuration flags and environment variables.
 
+## --create-account
+
+To provision an account from the command line, you'll need to provide the login, email, and account profile. For example:
+
+```
+.\baton-ldap.exe --base-dn "DC=baton-dev,DC=d2,DC=ductone,DC=com" --password "password" -p --create-account-login 'example-user' --create-account-profile "{\"rdnKey\":\"uid\",\"path\":\"cn=staged users,cn=accounts,cn=provisioning\",\"suffix\":\"dc=example,dc=test\",\"objectClass\":[\"top\",\"person\",\"organizationalperson\",\"posixAccount\"],\"additionalAttributes\":{\"cn\":\"Example User\",\"sn\":\"User\",\"homeDirectory\":\"\",\"uidNumber\":\"-1\",\"gidNumber\":\"-1\"}}"'
+```
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose
