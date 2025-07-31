@@ -94,6 +94,7 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 				ldap.LDAPResultUnwillingToPerform,
 				ldap.LDAPResultNoSuchAttribute,
 			) && isModify {
+				cp.Release()
 				return nil
 			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
