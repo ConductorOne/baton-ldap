@@ -55,6 +55,8 @@ type userResourceType struct {
 	disableOperationalAttrs bool
 }
 
+var _ builder.AccountManager = &userResourceType{}
+
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return u.resourceType
 }
@@ -376,7 +378,7 @@ func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (
 func (o *userResourceType) CreateAccount(
 	ctx context.Context,
 	accountInfo *v2.AccountInfo,
-	credentialOptions *v2.CredentialOptions,
+	credentialOptions *v2.LocalCredentialOptions,
 ) (
 	builder.CreateAccountResponse,
 	[]*v2.PlaintextData,
