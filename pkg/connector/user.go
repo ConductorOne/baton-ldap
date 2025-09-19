@@ -10,6 +10,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	builder "github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/crypto"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -56,6 +57,7 @@ type userResourceType struct {
 }
 
 var _ builder.AccountManager = &userResourceType{}
+var _ builder.CredentialManager = &userResourceType{}
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return u.resourceType
@@ -369,7 +371,9 @@ func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
 	return &v2.CredentialDetailsAccountProvisioning{
 		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_ENCRYPTED_PASSWORD,
 			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
 		},
 		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
 	}, nil, nil
@@ -408,9 +412,14 @@ func (o *userResourceType) CreateAccount(
 		return nil, nil, nil, err
 	}
 
+	ptd, annos, err := o.setPassword(ctx, dn, credentialOptions)
+	if err != nil {
+		l.Error("baton-ldap: create-account failed to set password", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		return nil, nil, nil, err
+	}
+
 	acc, err := getAccount(ctx, o.client, dn)
 	if err != nil {
-		l.Error("baton-ldap: create-account failed to get account", zap.Error(err), zap.Any("accountInfo", accountInfo))
 		return nil, nil, nil, err
 	}
 
@@ -423,7 +432,84 @@ func (o *userResourceType) CreateAccount(
 		Resource: ur,
 	}
 
-	return resp, nil, nil, nil
+	return resp, ptd, annos, nil
+}
+
+func (o *userResourceType) Rotate(ctx context.Context, resourceId *v2.ResourceId, credentialOptions *v2.LocalCredentialOptions) ([]*v2.PlaintextData, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("rotating user", zap.String("resource_id", resourceId.Resource))
+
+	userDN, err := ldap.CanonicalizeDN(resourceId.Resource)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to canonicalize user DN: %w", err)
+	}
+
+	ptd, annos, err := o.setPassword(ctx, userDN.String(), credentialOptions)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to set password: %w", err)
+	}
+
+	return ptd, annos, nil
+}
+
+func (o *userResourceType) RotateCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsCredentialRotation, annotations.Annotations, error) {
+	return &v2.CredentialDetailsCredentialRotation{
+		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_ENCRYPTED_PASSWORD,
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
+		},
+		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_ENCRYPTED_PASSWORD,
+	}, nil, nil
+}
+
+func (o *userResourceType) setPassword(
+	ctx context.Context,
+	dn string,
+	credentialOptions *v2.LocalCredentialOptions,
+) ([]*v2.PlaintextData, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+	l.Debug("setting password for user", zap.String("dn", dn))
+
+	acc, err := getAccount(ctx, o.client, dn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+
+	password, err := crypto.GeneratePassword(ctx, credentialOptions)
+	if err != nil {
+		l.Error("baton-ldap: failed to generate password", zap.Error(err), zap.Any("dn", dn))
+		return nil, nil, err
+	}
+
+	modifyRequest := &ldap3.ModifyRequest{
+		DN: acc.DN,
+		Changes: []ldap3.Change{
+			{
+				Operation: ldap3.ReplaceAttribute,
+				Modification: ldap3.PartialAttribute{
+					Type: "userPassword",
+					Vals: []string{password},
+				},
+			},
+		},
+	}
+	err = o.client.LdapModify(ctx, modifyRequest)
+	if err != nil {
+		l.Error("baton-ldap: failed to set password", zap.Error(err), zap.Any("dn", dn))
+		return nil, nil, err
+	}
+	ptd := []*v2.PlaintextData{
+		{
+			Name:        "password",
+			Description: "The password for the user",
+			Schema:      "string",
+			Bytes:       []byte(password),
+		},
+	}
+
+	return ptd, nil, nil
 }
 
 func getAccount(ctx context.Context, client *ldap.Client, dn string) (*ldap.Entry, error) {
