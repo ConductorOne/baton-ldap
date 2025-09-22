@@ -477,23 +477,35 @@ func (o *userResourceType) setPassword(
 		return nil, nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
 	}
 
-	password, err := crypto.GeneratePassword(ctx, credentialOptions)
-	if err != nil {
-		l.Error("baton-ldap: failed to generate password", zap.Error(err), zap.Any("dn", dn))
-		return nil, nil, err
+	// These values are only if credentialOptions is NoPassword.
+	password := ""
+	// Delete password if credentialOptions is NoPassword.
+	change := ldap3.Change{
+		Operation: ldap3.DeleteAttribute,
+		Modification: ldap3.PartialAttribute{
+			Type: "userPassword",
+		},
+	}
+
+	// Generate or use decrypted password based on credentialOptions.
+	if credentialOptions.GetNoPassword() == nil {
+		password, err = crypto.GeneratePassword(ctx, credentialOptions)
+		if err != nil {
+			l.Error("baton-ldap: failed to generate password", zap.Error(err), zap.Any("dn", dn))
+			return nil, nil, err
+		}
+		change = ldap3.Change{
+			Operation: ldap3.ReplaceAttribute,
+			Modification: ldap3.PartialAttribute{
+				Type: "userPassword",
+				Vals: []string{password},
+			},
+		}
 	}
 
 	modifyRequest := &ldap3.ModifyRequest{
-		DN: acc.DN,
-		Changes: []ldap3.Change{
-			{
-				Operation: ldap3.ReplaceAttribute,
-				Modification: ldap3.PartialAttribute{
-					Type: "userPassword",
-					Vals: []string{password},
-				},
-			},
-		},
+		DN:      acc.DN,
+		Changes: []ldap3.Change{change},
 	}
 	err = o.client.LdapModify(ctx, modifyRequest)
 	if err != nil {
