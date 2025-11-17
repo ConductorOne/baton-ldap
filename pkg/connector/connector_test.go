@@ -59,7 +59,7 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 	}
 
 	container, err := openldap.Run(ctx,
-		"bitnami/openldap:2.6.6",
+		"osixia/openldap:1.5.0",
 		opts...,
 	)
 	if err != nil {
