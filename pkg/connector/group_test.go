@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"context"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -12,8 +11,7 @@ import (
 )
 
 func TestGroupGrantRevoke(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
@@ -81,8 +79,7 @@ func TestGroupGrantRevoke(t *testing.T) {
 }
 
 func TestGroupPosixGidNumber(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
