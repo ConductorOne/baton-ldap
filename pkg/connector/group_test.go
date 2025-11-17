@@ -17,7 +17,7 @@ func TestGroupGrantRevoke(t *testing.T) {
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
-	connector, err := createConnector(ctx, t, "simple..ldif")
+	connector, err := createConnector(ctx, t, "simple.ldif")
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN)
