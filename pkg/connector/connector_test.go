@@ -20,8 +20,7 @@ import (
 var fixtures embed.FS
 
 func TestValidate(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	connector, err := createConnector(ctx, t, "")
 	require.NoError(t, err)
@@ -59,7 +58,7 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 	}
 
 	container, err := openldap.Run(ctx,
-		"bitnami/openldap:2.6.6",
+		"bitnamilegacy/openldap:2.6.6",
 		opts...,
 	)
 	if err != nil {

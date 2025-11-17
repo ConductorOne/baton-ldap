@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"context"
 	"testing"
 
 	"github.com/conductorone/baton-sdk/pkg/pagination"
@@ -11,8 +10,7 @@ import (
 )
 
 func TestRoleGrantRevoke(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 

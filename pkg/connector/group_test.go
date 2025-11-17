@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"context"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -12,12 +11,11 @@ import (
 )
 
 func TestGroupGrantRevoke(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
-	connector, err := createConnector(ctx, t, "simple..ldif")
+	connector, err := createConnector(ctx, t, "simple.ldif")
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN)
@@ -81,8 +79,7 @@ func TestGroupGrantRevoke(t *testing.T) {
 }
 
 func TestGroupPosixGidNumber(t *testing.T) {
-	ctx, done := context.WithCancel(context.Background())
-	defer done()
+	ctx := t.Context()
 
 	ctx = ctxzap.ToContext(ctx, zap.Must(zap.NewDevelopment()))
 
