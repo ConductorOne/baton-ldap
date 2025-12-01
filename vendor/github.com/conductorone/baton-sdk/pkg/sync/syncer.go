@@ -1325,13 +1325,21 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, reso
 		ActiveSyncId:   s.getActiveSyncID(),
 	}.Build())
 	if err != nil {
+		// Ignore prefixError if we're calling a lambda with an old version of baton-sdk.
+		if strings.Contains(err.Error(), `unable to resolve \"type.googleapis.com/c1.connector.v2.EntitlementsServiceListStaticEntitlementsRequest\": \"not found\"","errorType":"prefixError"`) {
+			l := ctxzap.Extract(ctx)
+			l.Info("ignoring prefixError when calling ListStaticEntitlements", zap.Error(err))
+			s.state.FinishAction(ctx)
+			return nil
+		}
+
 		return err
 	}
 
 	for _, ent := range resp.GetList() {
 		resourcePageToken := ""
 		for {
-			// get all resources of resource type and create entitlements for each one
+			// Get all resources of resource type and create entitlements for each one.
 			resourcesResp, err := s.store.ListResources(ctx, v2.ResourcesServiceListResourcesRequest_builder{
 				ResourceTypeId: resourceTypeID,
 				PageToken:      resourcePageToken,
@@ -1342,11 +1350,20 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, reso
 			}
 			entitlements := []*v2.Entitlement{}
 			for _, resource := range resourcesResp.GetList() {
+				displayName := ent.GetDisplayName()
+				if displayName == "" {
+					displayName = resource.GetDisplayName()
+				}
+				description := ent.GetDescription()
+				if description == "" {
+					description = resource.GetDescription()
+				}
+
 				entitlements = append(entitlements, &v2.Entitlement{
 					Resource:    resource,
 					Id:          entitlement.NewEntitlementID(resource, ent.GetSlug()),
-					DisplayName: ent.GetDisplayName(),
-					Description: ent.GetDescription(),
+					DisplayName: displayName,
+					Description: description,
 					GrantableTo: ent.GetGrantableTo(),
 					Annotations: ent.GetAnnotations(),
 				})
@@ -1370,9 +1387,6 @@ func (s *syncer) syncStaticEntitlementsForResourceType(ctx context.Context, reso
 			return err
 		}
 	} else {
-		s.counts.EntitlementsProgress[resourceTypeID] += 1
-		s.counts.LogEntitlementsProgress(ctx, resourceTypeID)
-
 		s.state.FinishAction(ctx)
 	}
 
@@ -1899,6 +1913,10 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 	grants = append(grants, resp.GetList()...)
 
 	l := ctxzap.Extract(ctx)
+	resourcesToInsertMap := make(map[string]*v2.Resource, 0)
+	respAnnos := annotations.Annotations(resp.GetAnnotations())
+	insertResourceGrants := respAnnos.Contains(&v2.InsertResourceGrants{})
+
 	for _, grant := range grants {
 		grantAnnos := annotations.Annotations(grant.GetAnnotations())
 		if !s.dontExpandGrants && grantAnnos.Contains(&v2.GrantExpandable{}) {
@@ -1906,6 +1924,15 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 		}
 		if grantAnnos.ContainsAny(&v2.ExternalResourceMatchAll{}, &v2.ExternalResourceMatch{}, &v2.ExternalResourceMatchID{}) {
 			s.state.SetHasExternalResourcesGrants()
+		}
+
+		if insertResourceGrants {
+			resource := grant.GetEntitlement().GetResource()
+			bid, err := bid.MakeBid(resource)
+			if err != nil {
+				return err
+			}
+			resourcesToInsertMap[bid] = resource
 		}
 
 		if !s.state.ShouldFetchRelatedResources() {
@@ -1936,6 +1963,18 @@ func (s *syncer) syncGrantsForResource(ctx context.Context, resourceID *v2.Resou
 			}
 		}
 	}
+
+	if len(resourcesToInsertMap) > 0 {
+		resourcesToInsert := make([]*v2.Resource, 0)
+		for _, resource := range resourcesToInsertMap {
+			resourcesToInsert = append(resourcesToInsert, resource)
+		}
+		err = s.store.PutResources(ctx, resourcesToInsert...)
+		if err != nil {
+			return err
+		}
+	}
+
 	err = s.store.PutGrants(ctx, grants...)
 	if err != nil {
 		return err
