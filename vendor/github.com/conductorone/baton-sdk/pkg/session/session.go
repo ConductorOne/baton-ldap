@@ -23,18 +23,41 @@ func Chunk[T any](items []T, chunkSize int) iter.Seq[[]T] {
 }
 
 type GetManyable[T any] interface {
-	GetMany(ctx context.Context, keys []string, opt ...sessions.SessionStoreOption) (map[string]T, error)
+	GetMany(ctx context.Context, keys []string, opt ...sessions.SessionStoreOption) (map[string]T, []string, error)
 }
 
 func UnrollGetMany[T any](ctx context.Context, ss GetManyable[T], keys []string, opt ...sessions.SessionStoreOption) (map[string]T, error) {
 	all := make(map[string]T)
+	if len(keys) == 0 {
+		return all, nil
+	}
+
 	// TODO(Kans): parallelize this?
-	for keys := range Chunk(keys, MaxKeysPerRequest) {
-		some, err := ss.GetMany(ctx, keys, opt...)
-		if err != nil {
-			return nil, err
+	for keyChunk := range Chunk(keys, MaxKeysPerRequest) {
+		// For each chunk, unroll any unprocessed keys until all are processed
+		remainingKeys := keyChunk
+		for {
+			some, unprocessedKeys, err := ss.GetMany(ctx, remainingKeys, opt...)
+			if err != nil {
+				return nil, err
+			}
+
+			// Accumulate results
+			maps.Copy(all, some)
+
+			// If no unprocessed keys, we're done with this chunk
+			if len(unprocessedKeys) == 0 {
+				break
+			}
+
+			// Check for infinite loop: if unprocessed keys haven't been reduced, something is wrong
+			if len(unprocessedKeys) == len(remainingKeys) {
+				return nil, fmt.Errorf("unprocessed keys not reduced: %d unprocessed out of %d requested", len(unprocessedKeys), len(remainingKeys))
+			}
+
+			// Continue with unprocessed keys
+			remainingKeys = unprocessedKeys
 		}
-		maps.Copy(all, some)
 	}
 	return all, nil
 }
@@ -44,6 +67,9 @@ type SetManyable[T any] interface {
 }
 
 func UnrollSetMany[T any](ctx context.Context, ss SetManyable[T], items map[string]T, opt ...sessions.SessionStoreOption) error {
+	if len(items) == 0 {
+		return nil
+	}
 	if len(items) <= MaxKeysPerRequest {
 		return ss.SetMany(ctx, items, opt...)
 	}
