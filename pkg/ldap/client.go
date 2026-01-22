@@ -159,8 +159,8 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 		page = nextPage
 	}
 
-	var maxUID int = 0
-	var maxGID int = 0
+	maxUID := 0
+	maxGID := 0
 
 	for _, entry := range totalEntries {
 		uVal := entry.GetAttributeValue("uidNumber")
