@@ -551,6 +551,11 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 		return "", nil, fmt.Errorf("invalid/missing rdnValue")
 	}
 
+	calculatePosixIDs := false
+	if v, ok := data["calculatePosixIDs"].(bool); ok {
+		calculatePosixIDs = v
+	}
+
 	var dn string
 	if path != "" {
 		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), path, suffix}, ",")
@@ -558,7 +563,7 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), suffix}, ",")
 	}
 
-	isPossixAccount := false
+	isPosixAccount := false
 	objectClass, ok := data["objectClass"].([]any)
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing objectClass")
@@ -567,18 +572,18 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 		if s, ok := oc.(string); !ok {
 			return "", nil, fmt.Errorf("invalid objectClass")
 		} else if s == "posixAccount" {
-			isPossixAccount = true
+			isPosixAccount = true
 		}
 	}
 
 	attrs := []ldap3.Attribute{}
 
-	if isPossixAccount {
+	if calculatePosixIDs && isPosixAccount {
 		newUID, newGID, err := o.client.CalculateUIDAndGID(ctx, o.userSearchDN, ResourcesPageSize)
 		if err != nil {
 			return "", nil, err
 		}
- 
+
 		attrs = append(attrs, toAttr("uidNumber", newUID))
 		attrs = append(attrs, toAttr("gidNumber", newGID))
 	}
@@ -591,18 +596,21 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 			"path",
 			"suffix",
 			"login",
-			// TODO: Only skip these in case it's set to automatically use the last+1
-			"uidNumber",
-			"gidNumber",
+			"calculatePosixIDs",
 		}, k) {
 			continue
 		}
+
 		attrs = append(attrs, toAttr(k, v))
 	}
 
 	additionalAttributes, ok := data["additionalAttributes"].(map[string]interface{})
 	if ok {
 		for k, v := range additionalAttributes {
+			if calculatePosixIDs && (k == "uidNumber" || k == "gidNumber") {
+				continue
+			}
+
 			attrs = append(attrs, toAttr(k, v))
 		}
 	}

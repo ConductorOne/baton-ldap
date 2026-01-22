@@ -142,18 +142,18 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 			ctx,
 			ldap.ScopeWholeSubtree,
 			searchDomain,
-			"(objectClass=posixAccount)",     // filter
-			[]string{"uidNumber, gidNumber"}, // attributes
+			"(objectClass=posixAccount)",
+			[]string{"*"},
 			page,
 			pageSize,
 		)
 		if err != nil {
-			return "", "", fmt.Errorf("baton-ldap: failed to list users on getLastUIDNumber: %w", err)
+			return "", "", fmt.Errorf("baton-ldap: failed to list users on CalculateUIDAndGID: %w", err)
 		}
 
 		totalEntries = append(totalEntries, userEntries...)
 
-		if nextPage != "" {
+		if nextPage == "" {
 			break
 		}
 		page = nextPage
