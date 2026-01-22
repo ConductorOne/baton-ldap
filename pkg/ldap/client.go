@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,6 +130,59 @@ func encodePageToken(cookie []byte) string {
 	requestId++
 	requestId %= 100
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
+}
+
+// CalculateUIDAndGID returns the next valid values for UIDNumber and GIDNumber. That's the maximum stored increased by one.
+func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, pageSize uint32) (string, string, error) {
+	var totalEntries []*ldap.Entry
+	var page string
+
+	for {
+		userEntries, nextPage, err := c.LdapSearch(
+			ctx,
+			ldap.ScopeWholeSubtree,
+			searchDomain,
+			"(objectClass=posixAccount)",     // filter
+			[]string{"uidNumber, gidNumber"}, // attributes
+			page,
+			pageSize,
+		)
+		if err != nil {
+			return "", "", fmt.Errorf("baton-ldap: failed to list users on getLastUIDNumber: %w", err)
+		}
+
+		totalEntries = append(totalEntries, userEntries...)
+
+		if nextPage != "" {
+			break
+		}
+		page = nextPage
+	}
+
+	var maxUID int = 0
+	var maxGID int = 0
+
+	for _, entry := range totalEntries {
+		uVal := entry.GetAttributeValue("uidNumber")
+		if uVal != "" {
+			if i, err := strconv.Atoi(uVal); err == nil {
+				if maxUID < i {
+					maxUID = i
+				}
+			}
+		}
+
+		gVal := entry.GetAttributeValue("gidNumber")
+		if gVal != "" {
+			if i, err := strconv.Atoi(gVal); err == nil {
+				if maxGID < i {
+					maxGID = i
+				}
+			}
+		}
+	}
+
+	return strconv.Itoa(maxUID + 1), strconv.Itoa(maxGID + 1), nil
 }
 
 func (c *Client) LdapGet(ctx context.Context,
