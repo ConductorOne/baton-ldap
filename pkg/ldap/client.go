@@ -166,18 +166,14 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 		uVal := entry.GetAttributeValue("uidNumber")
 		if uVal != "" {
 			if i, err := strconv.Atoi(uVal); err == nil {
-				if maxUID < i {
-					maxUID = i
-				}
+				maxUID = max(maxUID, i)
 			}
 		}
 
 		gVal := entry.GetAttributeValue("gidNumber")
 		if gVal != "" {
 			if i, err := strconv.Atoi(gVal); err == nil {
-				if maxGID < i {
-					maxGID = i
-				}
+				maxGID = max(maxGID, i)
 			}
 		}
 	}

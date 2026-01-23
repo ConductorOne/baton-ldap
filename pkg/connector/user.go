@@ -571,7 +571,7 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	for _, oc := range objectClass {
 		if s, ok := oc.(string); !ok {
 			return "", nil, fmt.Errorf("invalid objectClass")
-		} else if keyEqualsTo(s, "posixAccount") {
+		} else if strings.EqualFold(s, "posixAccount") {
 			isPosixAccount = true
 		}
 	}
@@ -608,7 +608,7 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	if ok {
 		for k, v := range additionalAttributes {
 			if calculatePosixIDs &&
-				(keyEqualsTo(k, "uidNumber") || keyEqualsTo(k, "gidNumber")) {
+				(strings.EqualFold(k, "uidNumber") || strings.EqualFold(k, "gidNumber")) {
 				continue
 			}
 

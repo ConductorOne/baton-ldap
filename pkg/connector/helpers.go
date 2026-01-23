@@ -143,8 +143,3 @@ func toAttr(k string, v interface{}) ldap.Attribute {
 		}
 	}
 }
-
-// keyEqualsTo compares the values without considering casing.
-func keyEqualsTo(receivedKey string, expectedKey string) bool {
-	return strings.ToLower(receivedKey) == strings.ToLower(expectedKey)
-}
