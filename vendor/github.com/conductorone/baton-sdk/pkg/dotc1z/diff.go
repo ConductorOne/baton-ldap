@@ -11,6 +11,10 @@ import (
 )
 
 func (c *C1File) GenerateSyncDiff(ctx context.Context, baseSyncID string, appliedSyncID string) (string, error) {
+	if c.readOnly {
+		return "", ErrReadOnly
+	}
+
 	// Validate that both sync runs exist
 	baseSync, err := c.getSync(ctx, baseSyncID)
 	if err != nil {
@@ -95,7 +99,7 @@ func (c *C1File) diffTableQuery(table tableDescriptor, baseSyncID, appliedSyncID
 
 	queryColumns := []interface{}{}
 	for _, col := range columns {
-		if col == "sync_id" {
+		if col == "sync_id" { //nolint:goconst,nolintlint // ...
 			queryColumns = append(queryColumns, goqu.L(fmt.Sprintf("'%s' as sync_id", newSyncID)))
 			continue
 		}
