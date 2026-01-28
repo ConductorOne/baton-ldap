@@ -1,7 +1,6 @@
 package connector
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,9 +10,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/go-ldap/ldap/v3"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var ResourcesPageSize uint32 = 50
@@ -146,76 +142,4 @@ func toAttr(k string, v interface{}) ldap.Attribute {
 			Vals: []string{fmt.Sprintf("%v", v)},
 		}
 	}
-}
-
-func extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, []ldap.Attribute, error) {
-	l := ctxzap.Extract(ctx)
-
-	prof := accountInfo.GetProfile()
-	if prof == nil {
-		return "", nil, fmt.Errorf("missing profile")
-	}
-	data := prof.AsMap()
-	l.Debug("baton-ldap: create-account profile", zap.Any("data", data))
-
-	suffix, ok := data["suffix"].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing suffix")
-	}
-	path, ok := data["path"].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing path")
-	}
-	rdnKey, ok := data["rdnKey"].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing rdnKey")
-	}
-	rdnValue, ok := data["rdnValue"].(string)
-	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing rdnValue")
-	}
-
-	var dn string
-	if path != "" {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), path, suffix}, ",")
-	} else {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), suffix}, ",")
-	}
-
-	objectClass, ok := data["objectClass"].([]any)
-	if !ok {
-		return "", nil, fmt.Errorf("invalid/missing objectClass")
-	}
-	for _, oc := range objectClass {
-		if _, ok := oc.(string); !ok {
-			return "", nil, fmt.Errorf("invalid objectClass")
-		}
-	}
-
-	attrs := []ldap.Attribute{}
-
-	for k, v := range data {
-		if slices.Contains([]string{
-			"additionalAttributes",
-			"rdnKey",
-			"rdnValue",
-			"path",
-			"suffix",
-			"login",
-		}, k) {
-			continue
-		}
-		attrs = append(attrs, toAttr(k, v))
-	}
-
-	additionalAttributes, ok := data["additionalAttributes"].(map[string]interface{})
-	if ok {
-		for k, v := range additionalAttributes {
-			attrs = append(attrs, toAttr(k, v))
-		}
-	}
-
-	l.Debug("baton-ldap: create-account attributes", zap.Any("attrs", attrs))
-
-	return dn, attrs, nil
 }

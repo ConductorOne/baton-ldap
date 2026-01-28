@@ -395,7 +395,7 @@ func (o *userResourceType) CreateAccount(
 		return nil, nil, nil, fmt.Errorf("baton-ldap: create-account: missing credential options")
 	}
 
-	dn, attrs, err := extractProfile(ctx, accountInfo)
+	dn, attrs, err := o.extractProfile(ctx, accountInfo)
 	if err != nil {
 		l.Error("baton-ldap: create-account failed to extract profile", zap.Error(err), zap.Any("accountInfo", accountInfo))
 		return nil, nil, nil, err
@@ -522,6 +522,101 @@ func (o *userResourceType) setPassword(
 	}
 
 	return ptd, nil, nil
+}
+
+func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, []ldap3.Attribute, error) {
+	l := ctxzap.Extract(ctx)
+
+	prof := accountInfo.GetProfile()
+	if prof == nil {
+		return "", nil, fmt.Errorf("missing profile")
+	}
+	data := prof.AsMap()
+	l.Debug("baton-ldap: create-account profile", zap.Any("data", data))
+
+	suffix, ok := data["suffix"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing suffix")
+	}
+	path, ok := data["path"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing path")
+	}
+	rdnKey, ok := data["rdnKey"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing rdnKey")
+	}
+	rdnValue, ok := data["rdnValue"].(string)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing rdnValue")
+	}
+
+	calculatePosixUIDNumber := false
+	if v, ok := data["calculatePosixUIDNumber"].(bool); ok {
+		calculatePosixUIDNumber = v
+	}
+
+	var dn string
+	if path != "" {
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), path, suffix}, ",")
+	} else {
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), suffix}, ",")
+	}
+
+	isPosixAccount := false
+	objectClass, ok := data["objectClass"].([]any)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid/missing objectClass")
+	}
+	for _, oc := range objectClass {
+		if s, ok := oc.(string); !ok {
+			return "", nil, fmt.Errorf("invalid objectClass")
+		} else if strings.EqualFold(s, "posixAccount") {
+			isPosixAccount = true
+		}
+	}
+
+	attrs := []ldap3.Attribute{}
+
+	if calculatePosixUIDNumber && isPosixAccount {
+		newUID, err := o.client.CalculateUIDNumber(ctx, o.userSearchDN, ResourcesPageSize)
+		if err != nil {
+			return "", nil, err
+		}
+
+		attrs = append(attrs, toAttr("uidNumber", newUID))
+	}
+
+	for k, v := range data {
+		if slices.Contains([]string{
+			"additionalAttributes",
+			"rdnKey",
+			"rdnValue",
+			"path",
+			"suffix",
+			"login",
+			"calculatePosixUIDNumber",
+		}, k) {
+			continue
+		}
+
+		attrs = append(attrs, toAttr(k, v))
+	}
+
+	additionalAttributes, ok := data["additionalAttributes"].(map[string]interface{})
+	if ok {
+		for k, v := range additionalAttributes {
+			if calculatePosixUIDNumber && strings.EqualFold(k, "uidNumber") {
+				continue
+			}
+
+			attrs = append(attrs, toAttr(k, v))
+		}
+	}
+
+	l.Debug("baton-ldap: create-account attributes", zap.Any("attrs", attrs))
+
+	return dn, attrs, nil
 }
 
 func getAccount(ctx context.Context, client *ldap.Client, dn string) (*ldap.Entry, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,6 +130,46 @@ func encodePageToken(cookie []byte) string {
 	requestId++
 	requestId %= 100
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
+}
+
+// CalculateUIDNumber returns the next valid values for UIDNumber. That's the maximum stored increased by one.
+func (c *Client) CalculateUIDNumber(ctx context.Context, searchDomain *ldap.DN, pageSize uint32) (string, error) {
+	var totalEntries []*ldap.Entry
+	var page string
+
+	for {
+		userEntries, nextPage, err := c.LdapSearch(
+			ctx,
+			ldap.ScopeWholeSubtree,
+			searchDomain,
+			"(objectClass=posixAccount)",
+			[]string{"*"},
+			page,
+			pageSize,
+		)
+		if err != nil {
+			return "", fmt.Errorf("baton-ldap: failed to list users on CalculateUIDNumber: %w", err)
+		}
+
+		totalEntries = append(totalEntries, userEntries...)
+
+		if nextPage == "" {
+			break
+		}
+		page = nextPage
+	}
+
+	maxUID := 0
+	for _, entry := range totalEntries {
+		uVal := entry.GetAttributeValue("uidNumber")
+		if uVal != "" {
+			if i, err := strconv.Atoi(uVal); err == nil {
+				maxUID = max(maxUID, i)
+			}
+		}
+	}
+
+	return strconv.Itoa(maxUID + 1), nil
 }
 
 func (c *Client) LdapGet(ctx context.Context,

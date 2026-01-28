@@ -117,6 +117,16 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Order:       6,
 				Placeholder: "{\"cn\":\"Jane Doe\",\"sn\":\"Doe\"}",
 			},
+			"calculatePosixUIDNumber": {
+				DisplayName: "Calculate the next valid UID Number for the Posix Account provisioning",
+				Required:    false,
+				Field: &v2.ConnectorAccountCreationSchema_Field_BoolField{
+					BoolField: &v2.ConnectorAccountCreationSchema_BoolField{},
+				},
+				Description: "Posix Account UID Number gets calculated automatically to unique incremental values",
+				Order:       7,
+				Placeholder: "false",
+			},
 		},
 	}
 }
