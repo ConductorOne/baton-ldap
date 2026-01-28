@@ -551,9 +551,9 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 		return "", nil, fmt.Errorf("invalid/missing rdnValue")
 	}
 
-	calculatePosixIDs := false
-	if v, ok := data["calculatePosixIDs"].(bool); ok {
-		calculatePosixIDs = v
+	calculatePosixUIDNumber := false
+	if v, ok := data["calculatePosixUIDNumber"].(bool); ok {
+		calculatePosixUIDNumber = v
 	}
 
 	var dn string
@@ -578,14 +578,13 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 
 	attrs := []ldap3.Attribute{}
 
-	if calculatePosixIDs && isPosixAccount {
-		newUID, newGID, err := o.client.CalculateUIDAndGID(ctx, o.userSearchDN, ResourcesPageSize)
+	if calculatePosixUIDNumber && isPosixAccount {
+		newUID, err := o.client.CalculateUIDNumber(ctx, o.userSearchDN, ResourcesPageSize)
 		if err != nil {
 			return "", nil, err
 		}
 
 		attrs = append(attrs, toAttr("uidNumber", newUID))
-		attrs = append(attrs, toAttr("gidNumber", newGID))
 	}
 
 	for k, v := range data {
@@ -596,7 +595,7 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 			"path",
 			"suffix",
 			"login",
-			"calculatePosixIDs",
+			"calculatePosixUIDNumber",
 		}, k) {
 			continue
 		}
@@ -607,8 +606,7 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	additionalAttributes, ok := data["additionalAttributes"].(map[string]interface{})
 	if ok {
 		for k, v := range additionalAttributes {
-			if calculatePosixIDs &&
-				(strings.EqualFold(k, "uidNumber") || strings.EqualFold(k, "gidNumber")) {
+			if calculatePosixUIDNumber && strings.EqualFold(k, "uidNumber") {
 				continue
 			}
 

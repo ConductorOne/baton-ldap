@@ -132,8 +132,8 @@ func encodePageToken(cookie []byte) string {
 	return fmt.Sprintf("%v:%v", requestId, base64.StdEncoding.EncodeToString(cookie))
 }
 
-// CalculateUIDAndGID returns the next valid values for UIDNumber and GIDNumber. That's the maximum stored increased by one.
-func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, pageSize uint32) (string, string, error) {
+// CalculateUIDNumber returns the next valid values for UIDNumber. That's the maximum stored increased by one.
+func (c *Client) CalculateUIDNumber(ctx context.Context, searchDomain *ldap.DN, pageSize uint32) (string, error) {
 	var totalEntries []*ldap.Entry
 	var page string
 
@@ -148,7 +148,7 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 			pageSize,
 		)
 		if err != nil {
-			return "", "", fmt.Errorf("baton-ldap: failed to list users on CalculateUIDAndGID: %w", err)
+			return "", fmt.Errorf("baton-ldap: failed to list users on CalculateUIDNumber: %w", err)
 		}
 
 		totalEntries = append(totalEntries, userEntries...)
@@ -160,8 +160,6 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 	}
 
 	maxUID := 0
-	maxGID := 0
-
 	for _, entry := range totalEntries {
 		uVal := entry.GetAttributeValue("uidNumber")
 		if uVal != "" {
@@ -169,16 +167,9 @@ func (c *Client) CalculateUIDAndGID(ctx context.Context, searchDomain *ldap.DN, 
 				maxUID = max(maxUID, i)
 			}
 		}
-
-		gVal := entry.GetAttributeValue("gidNumber")
-		if gVal != "" {
-			if i, err := strconv.Atoi(gVal); err == nil {
-				maxGID = max(maxGID, i)
-			}
-		}
 	}
 
-	return strconv.Itoa(maxUID + 1), strconv.Itoa(maxGID + 1), nil
+	return strconv.Itoa(maxUID + 1), nil
 }
 
 func (c *Client) LdapGet(ctx context.Context,
