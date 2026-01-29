@@ -562,6 +562,12 @@ type Field struct {
 	//	*Field_BoolField
 	//	*Field_StringSliceField
 	//	*Field_StringMapField
+	//	*Field_ResourceIdField
+	//	*Field_ResourceIdSliceField
+	//	*Field_ResourceField
+	//	*Field_ResourceSliceField
+	//	*Field_EntitlementSliceField
+	//	*Field_GrantSliceField
 	Field         isField_Field `protobuf_oneof:"field"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -693,6 +699,60 @@ func (x *Field) GetStringMapField() *StringMapField {
 	return nil
 }
 
+func (x *Field) GetResourceIdField() *ResourceIdField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_ResourceIdField); ok {
+			return x.ResourceIdField
+		}
+	}
+	return nil
+}
+
+func (x *Field) GetResourceIdSliceField() *ResourceIdSliceField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_ResourceIdSliceField); ok {
+			return x.ResourceIdSliceField
+		}
+	}
+	return nil
+}
+
+func (x *Field) GetResourceField() *ResourceField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_ResourceField); ok {
+			return x.ResourceField
+		}
+	}
+	return nil
+}
+
+func (x *Field) GetResourceSliceField() *ResourceSliceField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_ResourceSliceField); ok {
+			return x.ResourceSliceField
+		}
+	}
+	return nil
+}
+
+func (x *Field) GetEntitlementSliceField() *EntitlementSliceField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_EntitlementSliceField); ok {
+			return x.EntitlementSliceField
+		}
+	}
+	return nil
+}
+
+func (x *Field) GetGrantSliceField() *GrantSliceField {
+	if x != nil {
+		if x, ok := x.Field.(*Field_GrantSliceField); ok {
+			return x.GrantSliceField
+		}
+	}
+	return nil
+}
+
 func (x *Field) SetName(v string) {
 	x.Name = v
 }
@@ -761,6 +821,54 @@ func (x *Field) SetStringMapField(v *StringMapField) {
 	x.Field = &Field_StringMapField{v}
 }
 
+func (x *Field) SetResourceIdField(v *ResourceIdField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_ResourceIdField{v}
+}
+
+func (x *Field) SetResourceIdSliceField(v *ResourceIdSliceField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_ResourceIdSliceField{v}
+}
+
+func (x *Field) SetResourceField(v *ResourceField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_ResourceField{v}
+}
+
+func (x *Field) SetResourceSliceField(v *ResourceSliceField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_ResourceSliceField{v}
+}
+
+func (x *Field) SetEntitlementSliceField(v *EntitlementSliceField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_EntitlementSliceField{v}
+}
+
+func (x *Field) SetGrantSliceField(v *GrantSliceField) {
+	if v == nil {
+		x.Field = nil
+		return
+	}
+	x.Field = &Field_GrantSliceField{v}
+}
+
 func (x *Field) HasField() bool {
 	if x == nil {
 		return false
@@ -808,6 +916,54 @@ func (x *Field) HasStringMapField() bool {
 	return ok
 }
 
+func (x *Field) HasResourceIdField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_ResourceIdField)
+	return ok
+}
+
+func (x *Field) HasResourceIdSliceField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_ResourceIdSliceField)
+	return ok
+}
+
+func (x *Field) HasResourceField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_ResourceField)
+	return ok
+}
+
+func (x *Field) HasResourceSliceField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_ResourceSliceField)
+	return ok
+}
+
+func (x *Field) HasEntitlementSliceField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_EntitlementSliceField)
+	return ok
+}
+
+func (x *Field) HasGrantSliceField() bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.Field.(*Field_GrantSliceField)
+	return ok
+}
+
 func (x *Field) ClearField() {
 	x.Field = nil
 }
@@ -842,12 +998,54 @@ func (x *Field) ClearStringMapField() {
 	}
 }
 
+func (x *Field) ClearResourceIdField() {
+	if _, ok := x.Field.(*Field_ResourceIdField); ok {
+		x.Field = nil
+	}
+}
+
+func (x *Field) ClearResourceIdSliceField() {
+	if _, ok := x.Field.(*Field_ResourceIdSliceField); ok {
+		x.Field = nil
+	}
+}
+
+func (x *Field) ClearResourceField() {
+	if _, ok := x.Field.(*Field_ResourceField); ok {
+		x.Field = nil
+	}
+}
+
+func (x *Field) ClearResourceSliceField() {
+	if _, ok := x.Field.(*Field_ResourceSliceField); ok {
+		x.Field = nil
+	}
+}
+
+func (x *Field) ClearEntitlementSliceField() {
+	if _, ok := x.Field.(*Field_EntitlementSliceField); ok {
+		x.Field = nil
+	}
+}
+
+func (x *Field) ClearGrantSliceField() {
+	if _, ok := x.Field.(*Field_GrantSliceField); ok {
+		x.Field = nil
+	}
+}
+
 const Field_Field_not_set_case case_Field_Field = 0
 const Field_StringField_case case_Field_Field = 100
 const Field_IntField_case case_Field_Field = 101
 const Field_BoolField_case case_Field_Field = 102
 const Field_StringSliceField_case case_Field_Field = 103
 const Field_StringMapField_case case_Field_Field = 104
+const Field_ResourceIdField_case case_Field_Field = 105
+const Field_ResourceIdSliceField_case case_Field_Field = 106
+const Field_ResourceField_case case_Field_Field = 107
+const Field_ResourceSliceField_case case_Field_Field = 108
+const Field_EntitlementSliceField_case case_Field_Field = 109
+const Field_GrantSliceField_case case_Field_Field = 110
 
 func (x *Field) WhichField() case_Field_Field {
 	if x == nil {
@@ -864,6 +1062,18 @@ func (x *Field) WhichField() case_Field_Field {
 		return Field_StringSliceField_case
 	case *Field_StringMapField:
 		return Field_StringMapField_case
+	case *Field_ResourceIdField:
+		return Field_ResourceIdField_case
+	case *Field_ResourceIdSliceField:
+		return Field_ResourceIdSliceField_case
+	case *Field_ResourceField:
+		return Field_ResourceField_case
+	case *Field_ResourceSliceField:
+		return Field_ResourceSliceField_case
+	case *Field_EntitlementSliceField:
+		return Field_EntitlementSliceField_case
+	case *Field_GrantSliceField:
+		return Field_GrantSliceField_case
 	default:
 		return Field_Field_not_set_case
 	}
@@ -880,11 +1090,18 @@ type Field_builder struct {
 	IsOps       bool
 	IsSecret    bool
 	// Fields of oneof Field:
-	StringField      *StringField
-	IntField         *IntField
-	BoolField        *BoolField
-	StringSliceField *StringSliceField
-	StringMapField   *StringMapField
+	StringField          *StringField
+	IntField             *IntField
+	BoolField            *BoolField
+	StringSliceField     *StringSliceField
+	StringMapField       *StringMapField
+	ResourceIdField      *ResourceIdField
+	ResourceIdSliceField *ResourceIdSliceField
+	// These are meant to serve as return types for actions.
+	ResourceField         *ResourceField
+	ResourceSliceField    *ResourceSliceField
+	EntitlementSliceField *EntitlementSliceField
+	GrantSliceField       *GrantSliceField
 	// -- end of Field
 }
 
@@ -913,6 +1130,24 @@ func (b0 Field_builder) Build() *Field {
 	}
 	if b.StringMapField != nil {
 		x.Field = &Field_StringMapField{b.StringMapField}
+	}
+	if b.ResourceIdField != nil {
+		x.Field = &Field_ResourceIdField{b.ResourceIdField}
+	}
+	if b.ResourceIdSliceField != nil {
+		x.Field = &Field_ResourceIdSliceField{b.ResourceIdSliceField}
+	}
+	if b.ResourceField != nil {
+		x.Field = &Field_ResourceField{b.ResourceField}
+	}
+	if b.ResourceSliceField != nil {
+		x.Field = &Field_ResourceSliceField{b.ResourceSliceField}
+	}
+	if b.EntitlementSliceField != nil {
+		x.Field = &Field_EntitlementSliceField{b.EntitlementSliceField}
+	}
+	if b.GrantSliceField != nil {
+		x.Field = &Field_GrantSliceField{b.GrantSliceField}
 	}
 	return m0
 }
@@ -951,6 +1186,31 @@ type Field_StringMapField struct {
 	StringMapField *StringMapField `protobuf:"bytes,104,opt,name=string_map_field,json=stringMapField,proto3,oneof"`
 }
 
+type Field_ResourceIdField struct {
+	ResourceIdField *ResourceIdField `protobuf:"bytes,105,opt,name=resource_id_field,json=resourceIdField,proto3,oneof"`
+}
+
+type Field_ResourceIdSliceField struct {
+	ResourceIdSliceField *ResourceIdSliceField `protobuf:"bytes,106,opt,name=resource_id_slice_field,json=resourceIdSliceField,proto3,oneof"`
+}
+
+type Field_ResourceField struct {
+	// These are meant to serve as return types for actions.
+	ResourceField *ResourceField `protobuf:"bytes,107,opt,name=resource_field,json=resourceField,proto3,oneof"`
+}
+
+type Field_ResourceSliceField struct {
+	ResourceSliceField *ResourceSliceField `protobuf:"bytes,108,opt,name=resource_slice_field,json=resourceSliceField,proto3,oneof"`
+}
+
+type Field_EntitlementSliceField struct {
+	EntitlementSliceField *EntitlementSliceField `protobuf:"bytes,109,opt,name=entitlement_slice_field,json=entitlementSliceField,proto3,oneof"`
+}
+
+type Field_GrantSliceField struct {
+	GrantSliceField *GrantSliceField `protobuf:"bytes,110,opt,name=grant_slice_field,json=grantSliceField,proto3,oneof"`
+}
+
 func (*Field_StringField) isField_Field() {}
 
 func (*Field_IntField) isField_Field() {}
@@ -960,6 +1220,962 @@ func (*Field_BoolField) isField_Field() {}
 func (*Field_StringSliceField) isField_Field() {}
 
 func (*Field_StringMapField) isField_Field() {}
+
+func (*Field_ResourceIdField) isField_Field() {}
+
+func (*Field_ResourceIdSliceField) isField_Field() {}
+
+func (*Field_ResourceField) isField_Field() {}
+
+func (*Field_ResourceSliceField) isField_Field() {}
+
+func (*Field_EntitlementSliceField) isField_Field() {}
+
+func (*Field_GrantSliceField) isField_Field() {}
+
+// These are partially duplicate with the Resource proto in the connector package.
+// This is to avoid import cycles
+type Resource struct {
+	state            protoimpl.MessageState `protogen:"hybrid.v1"`
+	ResourceId       *ResourceId            `protobuf:"bytes,1,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ParentResourceId *ResourceId            `protobuf:"bytes,2,opt,name=parent_resource_id,json=parentResourceId,proto3" json:"parent_resource_id,omitempty"`
+	DisplayName      string                 `protobuf:"bytes,3,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Description      string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Annotations      []*anypb.Any           `protobuf:"bytes,5,rep,name=annotations,proto3" json:"annotations,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Resource) Reset() {
+	*x = Resource{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Resource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Resource) ProtoMessage() {}
+
+func (x *Resource) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Resource) GetResourceId() *ResourceId {
+	if x != nil {
+		return x.ResourceId
+	}
+	return nil
+}
+
+func (x *Resource) GetParentResourceId() *ResourceId {
+	if x != nil {
+		return x.ParentResourceId
+	}
+	return nil
+}
+
+func (x *Resource) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *Resource) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *Resource) GetAnnotations() []*anypb.Any {
+	if x != nil {
+		return x.Annotations
+	}
+	return nil
+}
+
+func (x *Resource) SetResourceId(v *ResourceId) {
+	x.ResourceId = v
+}
+
+func (x *Resource) SetParentResourceId(v *ResourceId) {
+	x.ParentResourceId = v
+}
+
+func (x *Resource) SetDisplayName(v string) {
+	x.DisplayName = v
+}
+
+func (x *Resource) SetDescription(v string) {
+	x.Description = v
+}
+
+func (x *Resource) SetAnnotations(v []*anypb.Any) {
+	x.Annotations = v
+}
+
+func (x *Resource) HasResourceId() bool {
+	if x == nil {
+		return false
+	}
+	return x.ResourceId != nil
+}
+
+func (x *Resource) HasParentResourceId() bool {
+	if x == nil {
+		return false
+	}
+	return x.ParentResourceId != nil
+}
+
+func (x *Resource) ClearResourceId() {
+	x.ResourceId = nil
+}
+
+func (x *Resource) ClearParentResourceId() {
+	x.ParentResourceId = nil
+}
+
+type Resource_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	ResourceId       *ResourceId
+	ParentResourceId *ResourceId
+	DisplayName      string
+	Description      string
+	Annotations      []*anypb.Any
+}
+
+func (b0 Resource_builder) Build() *Resource {
+	m0 := &Resource{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.ResourceId = b.ResourceId
+	x.ParentResourceId = b.ParentResourceId
+	x.DisplayName = b.DisplayName
+	x.Description = b.Description
+	x.Annotations = b.Annotations
+	return m0
+}
+
+type ResourceId struct {
+	state          protoimpl.MessageState `protogen:"hybrid.v1"`
+	ResourceTypeId string                 `protobuf:"bytes,1,opt,name=resource_type_id,json=resourceTypeId,proto3" json:"resource_type_id,omitempty"`
+	ResourceId     string                 `protobuf:"bytes,2,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ResourceId) Reset() {
+	*x = ResourceId{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceId) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceId) ProtoMessage() {}
+
+func (x *ResourceId) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourceId) GetResourceTypeId() string {
+	if x != nil {
+		return x.ResourceTypeId
+	}
+	return ""
+}
+
+func (x *ResourceId) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *ResourceId) SetResourceTypeId(v string) {
+	x.ResourceTypeId = v
+}
+
+func (x *ResourceId) SetResourceId(v string) {
+	x.ResourceId = v
+}
+
+type ResourceId_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	ResourceTypeId string
+	ResourceId     string
+}
+
+func (b0 ResourceId_builder) Build() *ResourceId {
+	m0 := &ResourceId{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.ResourceTypeId = b.ResourceTypeId
+	x.ResourceId = b.ResourceId
+	return m0
+}
+
+type ResourceField struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	DefaultValue  *Resource              `protobuf:"bytes,1,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceField) Reset() {
+	*x = ResourceField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceField) ProtoMessage() {}
+
+func (x *ResourceField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourceField) GetDefaultValue() *Resource {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *ResourceField) SetDefaultValue(v *Resource) {
+	x.DefaultValue = v
+}
+
+func (x *ResourceField) HasDefaultValue() bool {
+	if x == nil {
+		return false
+	}
+	return x.DefaultValue != nil
+}
+
+func (x *ResourceField) ClearDefaultValue() {
+	x.DefaultValue = nil
+}
+
+type ResourceField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue *Resource
+}
+
+func (b0 ResourceField_builder) Build() *ResourceField {
+	m0 := &ResourceField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	return m0
+}
+
+type ResourceSliceField struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	DefaultValue  []*Resource            `protobuf:"bytes,1,rep,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceSliceField) Reset() {
+	*x = ResourceSliceField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceSliceField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceSliceField) ProtoMessage() {}
+
+func (x *ResourceSliceField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourceSliceField) GetDefaultValue() []*Resource {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *ResourceSliceField) SetDefaultValue(v []*Resource) {
+	x.DefaultValue = v
+}
+
+type ResourceSliceField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue []*Resource
+}
+
+func (b0 ResourceSliceField_builder) Build() *ResourceSliceField {
+	m0 := &ResourceSliceField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	return m0
+}
+
+// Simplified Entitlement for config return types (avoids import cycles with connector package)
+type Entitlement struct {
+	state                      protoimpl.MessageState `protogen:"hybrid.v1"`
+	Id                         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	DisplayName                string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Description                string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Slug                       string                 `protobuf:"bytes,4,opt,name=slug,proto3" json:"slug,omitempty"`
+	Purpose                    string                 `protobuf:"bytes,5,opt,name=purpose,proto3" json:"purpose,omitempty"` // "PURPOSE_VALUE_ASSIGNMENT", "PURPOSE_VALUE_PERMISSION", or "PURPOSE_VALUE_OWNERSHIP"
+	GrantableToResourceTypeIds []string               `protobuf:"bytes,6,rep,name=grantable_to_resource_type_ids,json=grantableToResourceTypeIds,proto3" json:"grantable_to_resource_type_ids,omitempty"`
+	ResourceId                 string                 `protobuf:"bytes,7,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	ResourceTypeId             string                 `protobuf:"bytes,8,opt,name=resource_type_id,json=resourceTypeId,proto3" json:"resource_type_id,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *Entitlement) Reset() {
+	*x = Entitlement{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Entitlement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Entitlement) ProtoMessage() {}
+
+func (x *Entitlement) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Entitlement) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Entitlement) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *Entitlement) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *Entitlement) GetSlug() string {
+	if x != nil {
+		return x.Slug
+	}
+	return ""
+}
+
+func (x *Entitlement) GetPurpose() string {
+	if x != nil {
+		return x.Purpose
+	}
+	return ""
+}
+
+func (x *Entitlement) GetGrantableToResourceTypeIds() []string {
+	if x != nil {
+		return x.GrantableToResourceTypeIds
+	}
+	return nil
+}
+
+func (x *Entitlement) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *Entitlement) GetResourceTypeId() string {
+	if x != nil {
+		return x.ResourceTypeId
+	}
+	return ""
+}
+
+func (x *Entitlement) SetId(v string) {
+	x.Id = v
+}
+
+func (x *Entitlement) SetDisplayName(v string) {
+	x.DisplayName = v
+}
+
+func (x *Entitlement) SetDescription(v string) {
+	x.Description = v
+}
+
+func (x *Entitlement) SetSlug(v string) {
+	x.Slug = v
+}
+
+func (x *Entitlement) SetPurpose(v string) {
+	x.Purpose = v
+}
+
+func (x *Entitlement) SetGrantableToResourceTypeIds(v []string) {
+	x.GrantableToResourceTypeIds = v
+}
+
+func (x *Entitlement) SetResourceId(v string) {
+	x.ResourceId = v
+}
+
+func (x *Entitlement) SetResourceTypeId(v string) {
+	x.ResourceTypeId = v
+}
+
+type Entitlement_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Id                         string
+	DisplayName                string
+	Description                string
+	Slug                       string
+	Purpose                    string
+	GrantableToResourceTypeIds []string
+	ResourceId                 string
+	ResourceTypeId             string
+}
+
+func (b0 Entitlement_builder) Build() *Entitlement {
+	m0 := &Entitlement{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.Id = b.Id
+	x.DisplayName = b.DisplayName
+	x.Description = b.Description
+	x.Slug = b.Slug
+	x.Purpose = b.Purpose
+	x.GrantableToResourceTypeIds = b.GrantableToResourceTypeIds
+	x.ResourceId = b.ResourceId
+	x.ResourceTypeId = b.ResourceTypeId
+	return m0
+}
+
+type EntitlementSliceField struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	DefaultValue  []*Entitlement         `protobuf:"bytes,1,rep,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntitlementSliceField) Reset() {
+	*x = EntitlementSliceField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntitlementSliceField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntitlementSliceField) ProtoMessage() {}
+
+func (x *EntitlementSliceField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *EntitlementSliceField) GetDefaultValue() []*Entitlement {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *EntitlementSliceField) SetDefaultValue(v []*Entitlement) {
+	x.DefaultValue = v
+}
+
+type EntitlementSliceField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue []*Entitlement
+}
+
+func (b0 EntitlementSliceField_builder) Build() *EntitlementSliceField {
+	m0 := &EntitlementSliceField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	return m0
+}
+
+// Reference to an entitlement (used in Grant)
+type EntitlementRef struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntitlementRef) Reset() {
+	*x = EntitlementRef{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntitlementRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntitlementRef) ProtoMessage() {}
+
+func (x *EntitlementRef) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *EntitlementRef) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *EntitlementRef) SetId(v string) {
+	x.Id = v
+}
+
+type EntitlementRef_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Id string
+}
+
+func (b0 EntitlementRef_builder) Build() *EntitlementRef {
+	m0 := &EntitlementRef{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.Id = b.Id
+	return m0
+}
+
+// Simplified Grant for config return types (avoids import cycles with connector package)
+type Grant struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Entitlement   *EntitlementRef        `protobuf:"bytes,2,opt,name=entitlement,proto3" json:"entitlement,omitempty"`
+	Principal     *Resource              `protobuf:"bytes,3,opt,name=principal,proto3" json:"principal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Grant) Reset() {
+	*x = Grant{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Grant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Grant) ProtoMessage() {}
+
+func (x *Grant) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Grant) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Grant) GetEntitlement() *EntitlementRef {
+	if x != nil {
+		return x.Entitlement
+	}
+	return nil
+}
+
+func (x *Grant) GetPrincipal() *Resource {
+	if x != nil {
+		return x.Principal
+	}
+	return nil
+}
+
+func (x *Grant) SetId(v string) {
+	x.Id = v
+}
+
+func (x *Grant) SetEntitlement(v *EntitlementRef) {
+	x.Entitlement = v
+}
+
+func (x *Grant) SetPrincipal(v *Resource) {
+	x.Principal = v
+}
+
+func (x *Grant) HasEntitlement() bool {
+	if x == nil {
+		return false
+	}
+	return x.Entitlement != nil
+}
+
+func (x *Grant) HasPrincipal() bool {
+	if x == nil {
+		return false
+	}
+	return x.Principal != nil
+}
+
+func (x *Grant) ClearEntitlement() {
+	x.Entitlement = nil
+}
+
+func (x *Grant) ClearPrincipal() {
+	x.Principal = nil
+}
+
+type Grant_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Id          string
+	Entitlement *EntitlementRef
+	Principal   *Resource
+}
+
+func (b0 Grant_builder) Build() *Grant {
+	m0 := &Grant{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.Id = b.Id
+	x.Entitlement = b.Entitlement
+	x.Principal = b.Principal
+	return m0
+}
+
+type GrantSliceField struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	DefaultValue  []*Grant               `protobuf:"bytes,1,rep,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GrantSliceField) Reset() {
+	*x = GrantSliceField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GrantSliceField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GrantSliceField) ProtoMessage() {}
+
+func (x *GrantSliceField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *GrantSliceField) GetDefaultValue() []*Grant {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *GrantSliceField) SetDefaultValue(v []*Grant) {
+	x.DefaultValue = v
+}
+
+type GrantSliceField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue []*Grant
+}
+
+func (b0 GrantSliceField_builder) Build() *GrantSliceField {
+	m0 := &GrantSliceField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	return m0
+}
+
+type ResourceIdField struct {
+	state         protoimpl.MessageState `protogen:"hybrid.v1"`
+	DefaultValue  *ResourceId            `protobuf:"bytes,1,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	Rules         *ResourceIDRules       `protobuf:"bytes,3,opt,name=rules,proto3,oneof" json:"rules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceIdField) Reset() {
+	*x = ResourceIdField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceIdField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceIdField) ProtoMessage() {}
+
+func (x *ResourceIdField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourceIdField) GetDefaultValue() *ResourceId {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *ResourceIdField) GetRules() *ResourceIDRules {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
+func (x *ResourceIdField) SetDefaultValue(v *ResourceId) {
+	x.DefaultValue = v
+}
+
+func (x *ResourceIdField) SetRules(v *ResourceIDRules) {
+	x.Rules = v
+}
+
+func (x *ResourceIdField) HasDefaultValue() bool {
+	if x == nil {
+		return false
+	}
+	return x.DefaultValue != nil
+}
+
+func (x *ResourceIdField) HasRules() bool {
+	if x == nil {
+		return false
+	}
+	return x.Rules != nil
+}
+
+func (x *ResourceIdField) ClearDefaultValue() {
+	x.DefaultValue = nil
+}
+
+func (x *ResourceIdField) ClearRules() {
+	x.Rules = nil
+}
+
+type ResourceIdField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue *ResourceId
+	Rules        *ResourceIDRules
+}
+
+func (b0 ResourceIdField_builder) Build() *ResourceIdField {
+	m0 := &ResourceIdField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	x.Rules = b.Rules
+	return m0
+}
+
+type ResourceIdSliceField struct {
+	state         protoimpl.MessageState   `protogen:"hybrid.v1"`
+	DefaultValue  []*ResourceIdField       `protobuf:"bytes,1,rep,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	Rules         *RepeatedResourceIdRules `protobuf:"bytes,2,opt,name=rules,proto3,oneof" json:"rules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceIdSliceField) Reset() {
+	*x = ResourceIdSliceField{}
+	mi := &file_c1_config_v1_config_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceIdSliceField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceIdSliceField) ProtoMessage() {}
+
+func (x *ResourceIdSliceField) ProtoReflect() protoreflect.Message {
+	mi := &file_c1_config_v1_config_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ResourceIdSliceField) GetDefaultValue() []*ResourceIdField {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *ResourceIdSliceField) GetRules() *RepeatedResourceIdRules {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
+func (x *ResourceIdSliceField) SetDefaultValue(v []*ResourceIdField) {
+	x.DefaultValue = v
+}
+
+func (x *ResourceIdSliceField) SetRules(v *RepeatedResourceIdRules) {
+	x.Rules = v
+}
+
+func (x *ResourceIdSliceField) HasRules() bool {
+	if x == nil {
+		return false
+	}
+	return x.Rules != nil
+}
+
+func (x *ResourceIdSliceField) ClearRules() {
+	x.Rules = nil
+}
+
+type ResourceIdSliceField_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	DefaultValue []*ResourceIdField
+	Rules        *RepeatedResourceIdRules
+}
+
+func (b0 ResourceIdSliceField_builder) Build() *ResourceIdSliceField {
+	m0 := &ResourceIdSliceField{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.DefaultValue = b.DefaultValue
+	x.Rules = b.Rules
+	return m0
+}
 
 type IntField struct {
 	state protoimpl.MessageState `protogen:"hybrid.v1"`
@@ -972,7 +2188,7 @@ type IntField struct {
 
 func (x *IntField) Reset() {
 	*x = IntField{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[4]
+	mi := &file_c1_config_v1_config_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -984,7 +2200,7 @@ func (x *IntField) String() string {
 func (*IntField) ProtoMessage() {}
 
 func (x *IntField) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[4]
+	mi := &file_c1_config_v1_config_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1055,7 +2271,7 @@ type BoolField struct {
 
 func (x *BoolField) Reset() {
 	*x = BoolField{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[5]
+	mi := &file_c1_config_v1_config_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1067,7 +2283,7 @@ func (x *BoolField) String() string {
 func (*BoolField) ProtoMessage() {}
 
 func (x *BoolField) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[5]
+	mi := &file_c1_config_v1_config_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1137,7 +2353,7 @@ type StringSliceField struct {
 
 func (x *StringSliceField) Reset() {
 	*x = StringSliceField{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[6]
+	mi := &file_c1_config_v1_config_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1149,7 +2365,7 @@ func (x *StringSliceField) String() string {
 func (*StringSliceField) ProtoMessage() {}
 
 func (x *StringSliceField) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[6]
+	mi := &file_c1_config_v1_config_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +2435,7 @@ type StringMapField struct {
 
 func (x *StringMapField) Reset() {
 	*x = StringMapField{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[7]
+	mi := &file_c1_config_v1_config_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1231,7 +2447,7 @@ func (x *StringMapField) String() string {
 func (*StringMapField) ProtoMessage() {}
 
 func (x *StringMapField) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[7]
+	mi := &file_c1_config_v1_config_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1302,7 +2518,7 @@ type StringFieldOption struct {
 
 func (x *StringFieldOption) Reset() {
 	*x = StringFieldOption{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[8]
+	mi := &file_c1_config_v1_config_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +2530,7 @@ func (x *StringFieldOption) String() string {
 func (*StringFieldOption) ProtoMessage() {}
 
 func (x *StringFieldOption) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[8]
+	mi := &file_c1_config_v1_config_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1390,7 +2606,7 @@ type StringField struct {
 
 func (x *StringField) Reset() {
 	*x = StringField{}
-	mi := &file_c1_config_v1_config_proto_msgTypes[9]
+	mi := &file_c1_config_v1_config_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1402,7 +2618,7 @@ func (x *StringField) String() string {
 func (*StringField) ProtoMessage() {}
 
 func (x *StringField) ProtoReflect() protoreflect.Message {
-	mi := &file_c1_config_v1_config_proto_msgTypes[9]
+	mi := &file_c1_config_v1_config_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1535,7 +2751,7 @@ const file_c1_config_v1_config_proto_rawDesc = "" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x1b\n" +
 	"\thelp_text\x18\x03 \x01(\tR\bhelpText\x12\x16\n" +
 	"\x06fields\x18\x04 \x03(\tR\x06fields\x12\x18\n" +
-	"\adefault\x18\x05 \x01(\bR\adefault\"\xab\x04\n" +
+	"\adefault\x18\x05 \x01(\bR\adefault\"\x9d\b\n" +
 	"\x05Field\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12 \n" +
@@ -1550,8 +2766,58 @@ const file_c1_config_v1_config_proto_rawDesc = "" +
 	"\n" +
 	"bool_field\x18f \x01(\v2\x17.c1.config.v1.BoolFieldH\x00R\tboolField\x12N\n" +
 	"\x12string_slice_field\x18g \x01(\v2\x1e.c1.config.v1.StringSliceFieldH\x00R\x10stringSliceField\x12H\n" +
-	"\x10string_map_field\x18h \x01(\v2\x1c.c1.config.v1.StringMapFieldH\x00R\x0estringMapFieldB\a\n" +
-	"\x05field\"n\n" +
+	"\x10string_map_field\x18h \x01(\v2\x1c.c1.config.v1.StringMapFieldH\x00R\x0estringMapField\x12K\n" +
+	"\x11resource_id_field\x18i \x01(\v2\x1d.c1.config.v1.ResourceIdFieldH\x00R\x0fresourceIdField\x12[\n" +
+	"\x17resource_id_slice_field\x18j \x01(\v2\".c1.config.v1.ResourceIdSliceFieldH\x00R\x14resourceIdSliceField\x12D\n" +
+	"\x0eresource_field\x18k \x01(\v2\x1b.c1.config.v1.ResourceFieldH\x00R\rresourceField\x12T\n" +
+	"\x14resource_slice_field\x18l \x01(\v2 .c1.config.v1.ResourceSliceFieldH\x00R\x12resourceSliceField\x12]\n" +
+	"\x17entitlement_slice_field\x18m \x01(\v2#.c1.config.v1.EntitlementSliceFieldH\x00R\x15entitlementSliceField\x12K\n" +
+	"\x11grant_slice_field\x18n \x01(\v2\x1d.c1.config.v1.GrantSliceFieldH\x00R\x0fgrantSliceFieldB\a\n" +
+	"\x05field\"\x8a\x02\n" +
+	"\bResource\x129\n" +
+	"\vresource_id\x18\x01 \x01(\v2\x18.c1.config.v1.ResourceIdR\n" +
+	"resourceId\x12F\n" +
+	"\x12parent_resource_id\x18\x02 \x01(\v2\x18.c1.config.v1.ResourceIdR\x10parentResourceId\x12!\n" +
+	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x126\n" +
+	"\vannotations\x18\x05 \x03(\v2\x14.google.protobuf.AnyR\vannotations\"W\n" +
+	"\n" +
+	"ResourceId\x12(\n" +
+	"\x10resource_type_id\x18\x01 \x01(\tR\x0eresourceTypeId\x12\x1f\n" +
+	"\vresource_id\x18\x02 \x01(\tR\n" +
+	"resourceId\"L\n" +
+	"\rResourceField\x12;\n" +
+	"\rdefault_value\x18\x01 \x01(\v2\x16.c1.config.v1.ResourceR\fdefaultValue\"Q\n" +
+	"\x12ResourceSliceField\x12;\n" +
+	"\rdefault_value\x18\x01 \x03(\v2\x16.c1.config.v1.ResourceR\fdefaultValue\"\x9f\x02\n" +
+	"\vEntitlement\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
+	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
+	"\x04slug\x18\x04 \x01(\tR\x04slug\x12\x18\n" +
+	"\apurpose\x18\x05 \x01(\tR\apurpose\x12B\n" +
+	"\x1egrantable_to_resource_type_ids\x18\x06 \x03(\tR\x1agrantableToResourceTypeIds\x12\x1f\n" +
+	"\vresource_id\x18\a \x01(\tR\n" +
+	"resourceId\x12(\n" +
+	"\x10resource_type_id\x18\b \x01(\tR\x0eresourceTypeId\"W\n" +
+	"\x15EntitlementSliceField\x12>\n" +
+	"\rdefault_value\x18\x01 \x03(\v2\x19.c1.config.v1.EntitlementR\fdefaultValue\" \n" +
+	"\x0eEntitlementRef\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\x8d\x01\n" +
+	"\x05Grant\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12>\n" +
+	"\ventitlement\x18\x02 \x01(\v2\x1c.c1.config.v1.EntitlementRefR\ventitlement\x124\n" +
+	"\tprincipal\x18\x03 \x01(\v2\x16.c1.config.v1.ResourceR\tprincipal\"K\n" +
+	"\x0fGrantSliceField\x128\n" +
+	"\rdefault_value\x18\x01 \x03(\v2\x13.c1.config.v1.GrantR\fdefaultValue\"\x94\x01\n" +
+	"\x0fResourceIdField\x12=\n" +
+	"\rdefault_value\x18\x01 \x01(\v2\x18.c1.config.v1.ResourceIdR\fdefaultValue\x128\n" +
+	"\x05rules\x18\x03 \x01(\v2\x1d.c1.config.v1.ResourceIDRulesH\x00R\x05rules\x88\x01\x01B\b\n" +
+	"\x06_rules\"\xa6\x01\n" +
+	"\x14ResourceIdSliceField\x12B\n" +
+	"\rdefault_value\x18\x01 \x03(\v2\x1d.c1.config.v1.ResourceIdFieldR\fdefaultValue\x12@\n" +
+	"\x05rules\x18\x02 \x01(\v2%.c1.config.v1.RepeatedResourceIdRulesH\x00R\x05rules\x88\x01\x01B\b\n" +
+	"\x06_rules\"n\n" +
 	"\bIntField\x12#\n" +
 	"\rdefault_value\x18\x01 \x01(\x03R\fdefaultValue\x123\n" +
 	"\x05rules\x18\x02 \x01(\v2\x18.c1.config.v1.Int64RulesH\x00R\x05rules\x88\x01\x01B\b\n" +
@@ -1596,52 +2862,84 @@ const file_c1_config_v1_config_proto_rawDesc = "" +
 	"\x1dSTRING_FIELD_TYPE_FILE_UPLOAD\x10\x04B3Z1github.com/conductorone/baton-sdk/pb/c1/config/v1b\x06proto3"
 
 var file_c1_config_v1_config_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_c1_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_c1_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_c1_config_v1_config_proto_goTypes = []any{
-	(ConstraintKind)(0),         // 0: c1.config.v1.ConstraintKind
-	(StringFieldType)(0),        // 1: c1.config.v1.StringFieldType
-	(*Configuration)(nil),       // 2: c1.config.v1.Configuration
-	(*Constraint)(nil),          // 3: c1.config.v1.Constraint
-	(*FieldGroup)(nil),          // 4: c1.config.v1.FieldGroup
-	(*Field)(nil),               // 5: c1.config.v1.Field
-	(*IntField)(nil),            // 6: c1.config.v1.IntField
-	(*BoolField)(nil),           // 7: c1.config.v1.BoolField
-	(*StringSliceField)(nil),    // 8: c1.config.v1.StringSliceField
-	(*StringMapField)(nil),      // 9: c1.config.v1.StringMapField
-	(*StringFieldOption)(nil),   // 10: c1.config.v1.StringFieldOption
-	(*StringField)(nil),         // 11: c1.config.v1.StringField
-	nil,                         // 12: c1.config.v1.StringMapField.DefaultValueEntry
-	(*Int64Rules)(nil),          // 13: c1.config.v1.Int64Rules
-	(*BoolRules)(nil),           // 14: c1.config.v1.BoolRules
-	(*RepeatedStringRules)(nil), // 15: c1.config.v1.RepeatedStringRules
-	(*StringMapRules)(nil),      // 16: c1.config.v1.StringMapRules
-	(*StringRules)(nil),         // 17: c1.config.v1.StringRules
-	(*anypb.Any)(nil),           // 18: google.protobuf.Any
+	(ConstraintKind)(0),             // 0: c1.config.v1.ConstraintKind
+	(StringFieldType)(0),            // 1: c1.config.v1.StringFieldType
+	(*Configuration)(nil),           // 2: c1.config.v1.Configuration
+	(*Constraint)(nil),              // 3: c1.config.v1.Constraint
+	(*FieldGroup)(nil),              // 4: c1.config.v1.FieldGroup
+	(*Field)(nil),                   // 5: c1.config.v1.Field
+	(*Resource)(nil),                // 6: c1.config.v1.Resource
+	(*ResourceId)(nil),              // 7: c1.config.v1.ResourceId
+	(*ResourceField)(nil),           // 8: c1.config.v1.ResourceField
+	(*ResourceSliceField)(nil),      // 9: c1.config.v1.ResourceSliceField
+	(*Entitlement)(nil),             // 10: c1.config.v1.Entitlement
+	(*EntitlementSliceField)(nil),   // 11: c1.config.v1.EntitlementSliceField
+	(*EntitlementRef)(nil),          // 12: c1.config.v1.EntitlementRef
+	(*Grant)(nil),                   // 13: c1.config.v1.Grant
+	(*GrantSliceField)(nil),         // 14: c1.config.v1.GrantSliceField
+	(*ResourceIdField)(nil),         // 15: c1.config.v1.ResourceIdField
+	(*ResourceIdSliceField)(nil),    // 16: c1.config.v1.ResourceIdSliceField
+	(*IntField)(nil),                // 17: c1.config.v1.IntField
+	(*BoolField)(nil),               // 18: c1.config.v1.BoolField
+	(*StringSliceField)(nil),        // 19: c1.config.v1.StringSliceField
+	(*StringMapField)(nil),          // 20: c1.config.v1.StringMapField
+	(*StringFieldOption)(nil),       // 21: c1.config.v1.StringFieldOption
+	(*StringField)(nil),             // 22: c1.config.v1.StringField
+	nil,                             // 23: c1.config.v1.StringMapField.DefaultValueEntry
+	(*anypb.Any)(nil),               // 24: google.protobuf.Any
+	(*ResourceIDRules)(nil),         // 25: c1.config.v1.ResourceIDRules
+	(*RepeatedResourceIdRules)(nil), // 26: c1.config.v1.RepeatedResourceIdRules
+	(*Int64Rules)(nil),              // 27: c1.config.v1.Int64Rules
+	(*BoolRules)(nil),               // 28: c1.config.v1.BoolRules
+	(*RepeatedStringRules)(nil),     // 29: c1.config.v1.RepeatedStringRules
+	(*StringMapRules)(nil),          // 30: c1.config.v1.StringMapRules
+	(*StringRules)(nil),             // 31: c1.config.v1.StringRules
 }
 var file_c1_config_v1_config_proto_depIdxs = []int32{
 	5,  // 0: c1.config.v1.Configuration.fields:type_name -> c1.config.v1.Field
 	3,  // 1: c1.config.v1.Configuration.constraints:type_name -> c1.config.v1.Constraint
 	4,  // 2: c1.config.v1.Configuration.field_groups:type_name -> c1.config.v1.FieldGroup
 	0,  // 3: c1.config.v1.Constraint.kind:type_name -> c1.config.v1.ConstraintKind
-	11, // 4: c1.config.v1.Field.string_field:type_name -> c1.config.v1.StringField
-	6,  // 5: c1.config.v1.Field.int_field:type_name -> c1.config.v1.IntField
-	7,  // 6: c1.config.v1.Field.bool_field:type_name -> c1.config.v1.BoolField
-	8,  // 7: c1.config.v1.Field.string_slice_field:type_name -> c1.config.v1.StringSliceField
-	9,  // 8: c1.config.v1.Field.string_map_field:type_name -> c1.config.v1.StringMapField
-	13, // 9: c1.config.v1.IntField.rules:type_name -> c1.config.v1.Int64Rules
-	14, // 10: c1.config.v1.BoolField.rules:type_name -> c1.config.v1.BoolRules
-	15, // 11: c1.config.v1.StringSliceField.rules:type_name -> c1.config.v1.RepeatedStringRules
-	12, // 12: c1.config.v1.StringMapField.default_value:type_name -> c1.config.v1.StringMapField.DefaultValueEntry
-	16, // 13: c1.config.v1.StringMapField.rules:type_name -> c1.config.v1.StringMapRules
-	17, // 14: c1.config.v1.StringField.rules:type_name -> c1.config.v1.StringRules
-	1,  // 15: c1.config.v1.StringField.type:type_name -> c1.config.v1.StringFieldType
-	10, // 16: c1.config.v1.StringField.options:type_name -> c1.config.v1.StringFieldOption
-	18, // 17: c1.config.v1.StringMapField.DefaultValueEntry.value:type_name -> google.protobuf.Any
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	22, // 4: c1.config.v1.Field.string_field:type_name -> c1.config.v1.StringField
+	17, // 5: c1.config.v1.Field.int_field:type_name -> c1.config.v1.IntField
+	18, // 6: c1.config.v1.Field.bool_field:type_name -> c1.config.v1.BoolField
+	19, // 7: c1.config.v1.Field.string_slice_field:type_name -> c1.config.v1.StringSliceField
+	20, // 8: c1.config.v1.Field.string_map_field:type_name -> c1.config.v1.StringMapField
+	15, // 9: c1.config.v1.Field.resource_id_field:type_name -> c1.config.v1.ResourceIdField
+	16, // 10: c1.config.v1.Field.resource_id_slice_field:type_name -> c1.config.v1.ResourceIdSliceField
+	8,  // 11: c1.config.v1.Field.resource_field:type_name -> c1.config.v1.ResourceField
+	9,  // 12: c1.config.v1.Field.resource_slice_field:type_name -> c1.config.v1.ResourceSliceField
+	11, // 13: c1.config.v1.Field.entitlement_slice_field:type_name -> c1.config.v1.EntitlementSliceField
+	14, // 14: c1.config.v1.Field.grant_slice_field:type_name -> c1.config.v1.GrantSliceField
+	7,  // 15: c1.config.v1.Resource.resource_id:type_name -> c1.config.v1.ResourceId
+	7,  // 16: c1.config.v1.Resource.parent_resource_id:type_name -> c1.config.v1.ResourceId
+	24, // 17: c1.config.v1.Resource.annotations:type_name -> google.protobuf.Any
+	6,  // 18: c1.config.v1.ResourceField.default_value:type_name -> c1.config.v1.Resource
+	6,  // 19: c1.config.v1.ResourceSliceField.default_value:type_name -> c1.config.v1.Resource
+	10, // 20: c1.config.v1.EntitlementSliceField.default_value:type_name -> c1.config.v1.Entitlement
+	12, // 21: c1.config.v1.Grant.entitlement:type_name -> c1.config.v1.EntitlementRef
+	6,  // 22: c1.config.v1.Grant.principal:type_name -> c1.config.v1.Resource
+	13, // 23: c1.config.v1.GrantSliceField.default_value:type_name -> c1.config.v1.Grant
+	7,  // 24: c1.config.v1.ResourceIdField.default_value:type_name -> c1.config.v1.ResourceId
+	25, // 25: c1.config.v1.ResourceIdField.rules:type_name -> c1.config.v1.ResourceIDRules
+	15, // 26: c1.config.v1.ResourceIdSliceField.default_value:type_name -> c1.config.v1.ResourceIdField
+	26, // 27: c1.config.v1.ResourceIdSliceField.rules:type_name -> c1.config.v1.RepeatedResourceIdRules
+	27, // 28: c1.config.v1.IntField.rules:type_name -> c1.config.v1.Int64Rules
+	28, // 29: c1.config.v1.BoolField.rules:type_name -> c1.config.v1.BoolRules
+	29, // 30: c1.config.v1.StringSliceField.rules:type_name -> c1.config.v1.RepeatedStringRules
+	23, // 31: c1.config.v1.StringMapField.default_value:type_name -> c1.config.v1.StringMapField.DefaultValueEntry
+	30, // 32: c1.config.v1.StringMapField.rules:type_name -> c1.config.v1.StringMapRules
+	31, // 33: c1.config.v1.StringField.rules:type_name -> c1.config.v1.StringRules
+	1,  // 34: c1.config.v1.StringField.type:type_name -> c1.config.v1.StringFieldType
+	21, // 35: c1.config.v1.StringField.options:type_name -> c1.config.v1.StringFieldOption
+	24, // 36: c1.config.v1.StringMapField.DefaultValueEntry.value:type_name -> google.protobuf.Any
+	37, // [37:37] is the sub-list for method output_type
+	37, // [37:37] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_c1_config_v1_config_proto_init() }
@@ -1656,19 +2954,27 @@ func file_c1_config_v1_config_proto_init() {
 		(*Field_BoolField)(nil),
 		(*Field_StringSliceField)(nil),
 		(*Field_StringMapField)(nil),
+		(*Field_ResourceIdField)(nil),
+		(*Field_ResourceIdSliceField)(nil),
+		(*Field_ResourceField)(nil),
+		(*Field_ResourceSliceField)(nil),
+		(*Field_EntitlementSliceField)(nil),
+		(*Field_GrantSliceField)(nil),
 	}
-	file_c1_config_v1_config_proto_msgTypes[4].OneofWrappers = []any{}
-	file_c1_config_v1_config_proto_msgTypes[5].OneofWrappers = []any{}
-	file_c1_config_v1_config_proto_msgTypes[6].OneofWrappers = []any{}
-	file_c1_config_v1_config_proto_msgTypes[7].OneofWrappers = []any{}
-	file_c1_config_v1_config_proto_msgTypes[9].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[13].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[14].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[15].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[16].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[17].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[18].OneofWrappers = []any{}
+	file_c1_config_v1_config_proto_msgTypes[20].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_c1_config_v1_config_proto_rawDesc), len(file_c1_config_v1_config_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   11,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
