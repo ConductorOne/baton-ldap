@@ -249,7 +249,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	l = l.With(zap.Stringer("group_dn", groupDN))
 
 	var ldapGroup *ldap3.Entry
-	externalId := resource.GetExternalId()
+	externalId := resource.GetExternalId() //nolint:staticcheck // Deprecated, but needed for raw DN fallback lookup.
 	if externalId == nil {
 		ldapGroup, err = g.client.LdapGet(
 			ctx,
