@@ -9,7 +9,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/jackc/puddle/v2 v2.2.2
-	github.com/quasilyte/go-ruleguard/dsl v0.3.22
+	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/openldap v0.40.0
 	go.uber.org/zap v1.27.1
