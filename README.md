@@ -1,6 +1,6 @@
 ![Baton Logo](./docs/images/baton-logo.png)
 
-# `baton-ldap` [![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-ldap.svg)](https://pkg.go.dev/github.com/conductorone/baton-ldap) ![main ci](https://github.com/conductorone/baton-ldap/actions/workflows/main.yaml/badge.svg)
+# `baton-ldap` [![Go Reference](https://pkg.go.dev/badge/github.com/conductorone/baton-ldap.svg)](https://pkg.go.dev/github.com/conductorone/baton-ldap) ![ci](https://github.com/conductorone/baton-ldap/actions/workflows/ci.yaml/badge.svg) ![verify](https://github.com/conductorone/baton-ldap/actions/workflows/verify.yaml/badge.svg)
 
 `baton-ldap` is a connector for LDAP built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the LDAP protocol to sync data about roles, users, and groups.
 
@@ -10,7 +10,7 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more about the
 
 ## Credentials
 
-To access the LDAP server, you must provide the username and password you use to login to the LDAP server. 
+To access the LDAP server, you must provide the username and password you use to login to the LDAP server.
 
 # Getting Started
 
@@ -64,7 +64,7 @@ You can then access the PHP LDAP admin server at http://localhost:8080 and login
 username: `CN=admin,DC=example,DC=org`
 password: `admin`
 
-After you login you can create new resources to be synced by baton. 
+After you login you can create new resources to be synced by baton.
 
 After creating new resources on the LDAP server, use the `baton-ldap` cli to sync the data from the LDAP server with the example command below.
 `baton-ldap --base-dn dc=example,dc=org --bind-dn cn=admin,dc=example,dc=org --password admin --domain localhost`
