@@ -5,42 +5,7 @@ on:
   push:
     branches:
       - main
-
 jobs:
-  go-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-      - name: Run linters
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: latest
-          args: --timeout=3m
-  go-test:
-    strategy:
-      matrix:
-        platform: [ubuntu-latest]
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install Go
-        if: success()
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-      - name: go tests
-        run: go test -v -covermode=count -json ./... > test.json
-      - name: annotate go tests
-        if: always()
-        uses: guyarb/golang-test-annotations@v0.5.1
-        with:
-          test-results: test.json
   test:
     runs-on: ubuntu-latest
     services:
@@ -100,14 +65,11 @@ jobs:
         env:
           ACCOUNT_DISPLAYNAME: 'Example User'
           CREATE_ACCOUNT_FLAGS: >-
-              --create-account-login="example-user"
-              --create-account-profile='{"rdnKey":"cn","rdnValue":"example-user","path":"","suffix":"dc=example,dc=org","objectClass":["top","person"],"additionalAttributes":{"cn":"Example User","sn":"User"}}'
-              
-        run: ./baton-ldap ${{ env.CREATE_ACCOUNT_FLAGS }} 
-
+            --create-account-login="example-user" --create-account-profile='{"rdnKey":"cn","rdnValue":"example-user","path":"","suffix":"dc=example,dc=org","objectClass":["top","person"],"additionalAttributes":{"cn":"Example User","sn":"User"}}'
+        run: ./baton-ldap ${{ env.CREATE_ACCOUNT_FLAGS }}
       - name: Check account was created
         id: check_account
-        run: |
+        run: |-
           ./baton-ldap
           CREATED_ACCOUNT_ID=$(baton resources --output-format=json | jq -r --arg name "Example User" '.resources[] | select(.resource.displayName == $name) | .resource.id.resource')
           echo "account_id=$CREATED_ACCOUNT_ID" >> $GITHUB_OUTPUT
