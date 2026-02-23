@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.7.27
+	github.com/conductorone/baton-sdk v0.7.28
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
