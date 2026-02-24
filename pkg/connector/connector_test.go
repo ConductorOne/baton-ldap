@@ -49,10 +49,15 @@ func createConnector(ctx context.Context, t *testing.T, fixtureName string) (*LD
 			_ = os.Remove(fdPath)
 		})
 
-		_, err = fd.Write(data)
-		_ = fd.Close()
+		n, err := fd.Write(data)
 		if err != nil {
 			return nil, err
+		}
+		if n != len(data) {
+			t.Fatalf("short write: wrote %d bytes, expected %d", n, len(data))
+		}
+		if cerr := fd.Close(); cerr != nil {
+			t.Fatalf("failed to close temp file: %v", cerr)
 		}
 		opts = append(opts, openldap.WithInitialLdif(fdPath))
 	}
