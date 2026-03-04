@@ -25,7 +25,7 @@ To use this feature, configure the following account provisioning mappings:
 | Mapping field | Destination value | Description | Example CEL expression |
 | :--- | :--- | :--- | :--- |
 | **RDN Key** | `rdnKey` | The RDN attribute for the new entry | `"uid"` |
-| **RDN Value** | `rndValue` | The value for the RDN attribute | `subject.profile.login` |
+| **RDN Value** | `rdnValue` | The value for the RDN attribute | `subject.profile.login` |
 | **Path** | `path` | The DN path where the account will be created | `"ou=users,o=Example Org"` |
 | **Suffix** | `suffix` | The top-level entry DN (naming context) | `"dc=example,dc=com"` |
 | **Object Class(es)** | `objectClass` | Must include `posixAccount` | `["top", "person", "organizationalPerson", "posixAccount"]` |
