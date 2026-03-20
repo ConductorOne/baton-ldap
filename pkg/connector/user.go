@@ -557,10 +557,12 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	}
 
 	var dn string
+	escapedRDNValue := ldap3.EscapeDN(rdnValue)
+
 	if path != "" {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), path, suffix}, ",")
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, escapedRDNValue), path, suffix}, ",")
 	} else {
-		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, rdnValue), suffix}, ",")
+		dn = strings.Join([]string{fmt.Sprintf("%s=%s", rdnKey, escapedRDNValue), suffix}, ",")
 	}
 
 	isPosixAccount := false
