@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.8.14
+	github.com/conductorone/baton-sdk v0.8.15
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -14,6 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/openldap v0.40.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20250128182459-e0ece0dbea4c
+	google.golang.org/protobuf v1.36.10
 )
 
 require (
@@ -81,7 +82,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	golang.org/x/term v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
 )
 
 require (
