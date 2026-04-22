@@ -375,7 +375,7 @@ func (o *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (
 			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
 			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
 		},
-		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
 	}, nil, nil
 }
 
@@ -512,13 +512,16 @@ func (o *userResourceType) setPassword(
 		l.Error("baton-ldap: failed to set password", zap.Error(err), zap.Any("dn", dn))
 		return nil, nil, err
 	}
-	ptd := []*v2.PlaintextData{
-		{
-			Name:        "password",
-			Description: "The password for the user",
-			Schema:      "string",
-			Bytes:       []byte(password),
-		},
+	var ptd []*v2.PlaintextData
+	if password != "" {
+		ptd = []*v2.PlaintextData{
+			{
+				Name:        "password",
+				Description: "The password for the user",
+				Schema:      "string",
+				Bytes:       []byte(password),
+			},
+		}
 	}
 
 	return ptd, nil, nil
