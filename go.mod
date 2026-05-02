@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.8.30
+	github.com/conductorone/baton-sdk v0.9.0
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -29,7 +29,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/conductorone/dpop v0.2.3 // indirect
 	github.com/conductorone/dpop/integrations/dpop_grpc v0.2.3 // indirect
-	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.2.3 // indirect
+	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.2.5 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
