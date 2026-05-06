@@ -504,7 +504,9 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Add(attrGroupMemberPosix, username)
 
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
+	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") ||
+		slices.Contains(group.GetAttributeValues("objectClass"), "groupOfNames") ||
+		groupObjectGUID != "":
 		modifyRequest.Add(attrGroupMember, principalDNArr)
 
 	default:
@@ -553,7 +555,9 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Delete(attrGroupMemberPosix, username)
 
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
+	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") ||
+		slices.Contains(group.GetAttributeValues("objectClass"), "groupOfNames") ||
+		groupObjectGUID != "":
 		modifyRequest.Delete(attrGroupMember, principalDNArr)
 
 	default:

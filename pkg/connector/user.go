@@ -604,6 +604,10 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 		}, k) {
 			continue
 		}
+		// "mail" is the standard LDAP attribute (RFC 2798); map "email" to it.
+		if k == "email" {
+			k = "mail"
+		}
 
 		attrs = append(attrs, toAttr(k, v))
 	}
