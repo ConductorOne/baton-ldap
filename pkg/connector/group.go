@@ -701,7 +701,10 @@ func parseMemberURL(rawURL string) (string, int, string, error) {
 
 	var filter string
 	if len(parts) > 2 && parts[2] != "" {
-		filter = parts[2]
+		filter, err = url.PathUnescape(parts[2])
+		if err != nil {
+			return "", 0, "", fmt.Errorf("invalid percent-encoding in filter: %w", err)
+		}
 	} else {
 		filter = ldapFilterAnyObject
 	}

@@ -219,6 +219,13 @@ func TestParseMemberURL(t *testing.T) {
 			wantFilter: ldapFilterAnyObject,
 		},
 		{
+			name:       "percent-encoded filter is decoded",
+			rawURL:     "ldap:///ou=users,dc=example,dc=org??sub?(cn=John%20Doe)",
+			wantBase:   "ou=users,dc=example,dc=org",
+			wantScope:  ldap3.ScopeWholeSubtree,
+			wantFilter: "(cn=John Doe)",
+		},
+		{
 			name:    "invalid URL",
 			rawURL:  "://bad url",
 			wantErr: true,
