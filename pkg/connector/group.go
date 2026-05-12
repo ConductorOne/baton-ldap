@@ -25,7 +25,7 @@ var objectClassesToResourceTypes = map[string]*v2.ResourceType{
 	"group":                resourceTypeGroup,
 	"groupOfNames":         resourceTypeGroup,
 	"groupOfUniqueNames":   resourceTypeGroup,
-	"groupOfURLs":          resourceTypeGroup,
+	objectClassGroupOfURLs: resourceTypeGroup,
 	"inetOrgPerson":        resourceTypeUser,
 	"posixGroup":           resourceTypeGroup,
 	"organizationalPerson": resourceTypeUser,
@@ -34,7 +34,8 @@ var objectClassesToResourceTypes = map[string]*v2.ResourceType{
 }
 
 const (
-	ldapFilterAnyObject = "(objectClass=*)"
+	ldapFilterAnyObject    = "(objectClass=*)"
+	objectClassGroupOfURLs = "groupOfURLs"
 
 	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=groupOfNames)(objectClass=groupOfURLs)(objectClass=posixGroup)(objectClass=group)"
 	groupFilter        = "(|" + groupObjectClasses + ")"
@@ -254,6 +255,20 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 	l = l.With(zap.Stringer("group_dn", groupDN))
 
+	bag, _, err := parsePageToken(token.Token, &v2.ResourceId{
+		ResourceType: resourceTypeGroup.Id,
+		Resource:     resource.Id.Resource,
+	})
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	// If we are paginating through a groupOfURLs expansion, skip the group-entry
+	// fetch — the memberURL and LDAP cursor are already encoded in the bag.
+	if bag.ResourceTypeID() == objectClassGroupOfURLs {
+		return g.grantsFromMemberURL(ctx, resource, nil, bag)
+	}
+
 	var ldapGroup *ldap3.Entry
 	externalId := resource.GetExternalId() //nolint:staticcheck // Deprecated, but needed for raw DN fallback lookup.
 	if externalId == nil {
@@ -280,8 +295,8 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	if slices.Contains(ldapGroup.GetAttributeValues("objectClass"), "groupOfURLs") {
-		return g.grantsFromMemberURL(ctx, resource, ldapGroup)
+	if slices.Contains(ldapGroup.GetAttributeValues("objectClass"), objectClassGroupOfURLs) {
+		return g.grantsFromMemberURL(ctx, resource, ldapGroup, bag)
 	}
 
 	memberIDs := parseValues(ldapGroup, []string{attrGroupUniqueMember, attrGroupMember, attrGroupMemberPosix})
@@ -594,45 +609,63 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	return nil, nil
 }
 
-// grantsFromMemberURL expands each memberURL of a groupOfURLs entry into grants.
-func (g *groupResourceType) grantsFromMemberURL(ctx context.Context, resource *v2.Resource, group *ldap3.Entry) ([]*v2.Grant, string, annotations.Annotations, error) {
+// grantsFromMemberURL expands the current memberURL page of a groupOfURLs entry into grants.
+// group is the LDAP entry for the group; it is non-nil only on the first call (when
+// the bag's current ResourceTypeID is still the initial group state). On continuation
+// calls the memberURL and LDAP page cursor are read directly from the bag.
+func (g *groupResourceType) grantsFromMemberURL(ctx context.Context, resource *v2.Resource, group *ldap3.Entry, bag *pagination.Bag) ([]*v2.Grant, string, annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
-	var rv []*v2.Grant
-	for _, rawURL := range group.GetAttributeValues(attrGroupMemberURL) {
-		base, scope, filter, err := parseMemberURL(rawURL)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("ldap-connector: invalid memberURL %q: %w", rawURL, err)
+	// On the first call the bag holds the initial group state. Replace it with one
+	// page state per memberURL so subsequent SDK calls can skip the group-entry fetch.
+	if bag.ResourceTypeID() != objectClassGroupOfURLs {
+		memberURLs := group.GetAttributeValues(attrGroupMemberURL)
+		if len(memberURLs) == 0 {
+			return nil, "", nil, nil
 		}
-
-		// LDAP paged-results cookies are bound to the connection that opened
-		// the search. The client uses a connection pool, so a cookie returned
-		// from one call cannot safely be replayed on a later SDK call that may
-		// land on a different connection. All pages for this URL are therefore
-		// consumed here, within a single connection checkout, so no cookie ever
-		// escapes this function.
-		ldapPage := ""
-		for {
-			entries, nextLDAPPage, err := g.client.LdapSearchWithStringDN(ctx, scope, base, filter, nil, ldapPage, ResourcesPageSize)
-			if err != nil {
-				l.Error("ldap-connector: memberURL search failed", zap.String("url", rawURL), zap.Error(err))
-				return nil, "", nil, fmt.Errorf("ldap-connector: memberURL search failed: %w", err)
-			}
-			for _, entry := range entries {
-				g := newGrantFromEntry(resource, entry)
-				annos := annotations.Annotations(g.GetAnnotations())
-				annos.Update(&v2.GrantImmutable{})
-				g.SetAnnotations(annos)
-				rv = append(rv, g)
-			}
-			if nextLDAPPage == "" {
-				break
-			}
-			ldapPage = nextLDAPPage
+		// Pop the initial group state, then push URLs in reverse order so the
+		// first URL is on top (current).
+		bag.Pop()
+		for i := len(memberURLs) - 1; i >= 0; i-- {
+			bag.Push(pagination.PageState{
+				ResourceTypeID: objectClassGroupOfURLs,
+				ResourceID:     memberURLs[i],
+			})
 		}
 	}
 
-	return rv, "", nil, nil
+	rawURL := bag.ResourceID()
+	ldapPage := bag.PageToken()
+
+	base, scope, filter, err := parseMemberURL(rawURL)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("ldap-connector: invalid memberURL %q: %w", rawURL, err)
+	}
+
+	entries, nextLDAPPage, err := g.client.LdapSearchWithStringDN(ctx, scope, base, filter, nil, ldapPage, ResourcesPageSize)
+	if err != nil {
+		l.Error("ldap-connector: memberURL search failed", zap.String("url", rawURL), zap.Error(err))
+		return nil, "", nil, fmt.Errorf("ldap-connector: memberURL search failed: %w", err)
+	}
+
+	var rv []*v2.Grant
+	for _, entry := range entries {
+		gr := newGrantFromEntry(resource, entry)
+		annos := annotations.Annotations(gr.GetAnnotations())
+		annos.Update(&v2.GrantImmutable{})
+		gr.SetAnnotations(annos)
+		rv = append(rv, gr)
+	}
+
+	// NextToken either advances the LDAP cursor within this URL (nextLDAPPage != "")
+	// or pops this URL to expose the next one. When all URLs are exhausted Marshal
+	// returns "" which signals done to the SDK.
+	nextToken, err := bag.NextToken(nextLDAPPage)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return rv, nextToken, nil, nil
 }
 
 // parseMemberURL parses an LDAP URL per RFC 4516.
