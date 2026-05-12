@@ -27,7 +27,7 @@ func TestCreateAccountCommaInCN(t *testing.T) {
 		"rdnKey":      "cn",
 		"rdnValue":    "Smith, John",
 		"sn":          "Smith",
-		"objectClass": []interface{}{"inetOrgPerson", "top"},
+		"objectClass": []interface{}{"inetOrgPerson", ldapObjectClassTop},
 	})
 	require.NoError(t, err)
 

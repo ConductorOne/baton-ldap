@@ -14,6 +14,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	schemaFieldRDNKey   = "rdnKey"
+	schemaFieldRDNValue = "rdnValue"
+	schemaFieldPath     = "path"
+	schemaFieldSuffix   = "suffix"
+	ldapObjectClassTop  = "top"
+)
+
 var (
 	resourceTypeUser = &v2.ResourceType{
 		Id:          "user",
@@ -65,7 +73,7 @@ func (l *LDAP) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 func schema() *v2.ConnectorAccountCreationSchema {
 	return &v2.ConnectorAccountCreationSchema{
 		FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
-			"rdnKey": {
+			schemaFieldRDNKey: {
 				DisplayName: "RDN Key",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
@@ -73,7 +81,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Placeholder: "cn, uid, etc.",
 				Order:       1,
 			},
-			"rdnValue": {
+			schemaFieldRDNValue: {
 				DisplayName: "RDN Value",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
@@ -81,7 +89,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Placeholder: "JaneDoe",
 				Order:       2,
 			},
-			"path": {
+			schemaFieldPath: {
 				DisplayName: "Path",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
@@ -89,7 +97,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Order:       3,
 				Placeholder: "ou=users",
 			},
-			"suffix": {
+			schemaFieldSuffix: {
 				DisplayName: "Suffix",
 				Required:    true,
 				Field:       &v2.ConnectorAccountCreationSchema_Field_StringField{},
@@ -103,7 +111,7 @@ func schema() *v2.ConnectorAccountCreationSchema {
 				Description: "A list of Object Classes to apply to the user, e.g. person, user, etc.",
 				Field: &v2.ConnectorAccountCreationSchema_Field_StringListField{
 					StringListField: &v2.ConnectorAccountCreationSchema_StringListField{
-						DefaultValue: []string{"top", "person"},
+						DefaultValue: []string{ldapObjectClassTop, "person"},
 					},
 				},
 				Order:       5,
@@ -137,7 +145,7 @@ func (l *LDAP) Validate(ctx context.Context) (annotations.Annotations, error) {
 		ctx,
 		ldap3.ScopeBaseObject,
 		nil,
-		"(objectClass=*)",
+		ldapFilterAnyObject,
 		nil,
 		"",
 		1,
