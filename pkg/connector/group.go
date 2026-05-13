@@ -45,8 +45,7 @@ const (
 	attrGroupMember       = "member"
 	attrGroupUniqueMember = "uniqueMember"
 	attrGroupMemberPosix  = "memberUid"
-	attrGroupDescription  = "description"
-	attrGroupObjectGUID   = "objectGUID"
+	attrGroupDescription = "description"
 
 	groupMemberEntitlement = "member"
 )
@@ -492,7 +491,6 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, err
 	}
 
-	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
 	principalDNArr := []string{principal.Id.Resource}
 
 	switch {
@@ -504,11 +502,11 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Add(attrGroupMemberPosix, username)
 
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
-		modifyRequest.Add(attrGroupMember, principalDNArr)
+	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfUniqueNames"):
+		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
 
 	default:
-		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
+		modifyRequest.Add(attrGroupMember, principalDNArr)
 	}
 
 	// grant group membership to the principal
@@ -540,10 +538,8 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		return nil, err
 	}
 
-	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
 	principalDNArr := []string{principal.Id.Resource}
 
-	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
 	switch {
 	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
@@ -553,11 +549,11 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 		username := []string{dn.RDNs[0].Attributes[0].Value}
 		modifyRequest.Delete(attrGroupMemberPosix, username)
 
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
-		modifyRequest.Delete(attrGroupMember, principalDNArr)
+	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfUniqueNames"):
+		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
 
 	default:
-		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
+		modifyRequest.Delete(attrGroupMember, principalDNArr)
 	}
 
 	// revoke group membership from the principal
