@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -23,6 +25,7 @@ var objectClassesToResourceTypes = map[string]*v2.ResourceType{
 	"group":                resourceTypeGroup,
 	"groupOfNames":         resourceTypeGroup,
 	"groupOfUniqueNames":   resourceTypeGroup,
+	objectClassGroupOfURLs: resourceTypeGroup,
 	"inetOrgPerson":        resourceTypeUser,
 	"posixGroup":           resourceTypeGroup,
 	"organizationalPerson": resourceTypeUser,
@@ -31,7 +34,10 @@ var objectClassesToResourceTypes = map[string]*v2.ResourceType{
 }
 
 const (
-	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=groupOfNames)(objectClass=posixGroup)(objectClass=group)"
+	ldapFilterAnyObject    = "(objectClass=*)"
+	objectClassGroupOfURLs = "groupOfURLs"
+
+	groupObjectClasses = "(objectClass=groupOfUniqueNames)(objectClass=groupOfNames)(objectClass=groupOfURLs)(objectClass=posixGroup)(objectClass=group)"
 	groupFilter        = "(|" + groupObjectClasses + ")"
 	groupIdFilter      = "(&(gidNumber=%s)(|" + groupObjectClasses + "))"
 
@@ -45,6 +51,7 @@ const (
 	attrGroupMember       = "member"
 	attrGroupUniqueMember = "uniqueMember"
 	attrGroupMemberPosix  = "memberUid"
+	attrGroupMemberURL    = "memberURL"
 	attrGroupDescription  = "description"
 	attrGroupObjectGUID   = "objectGUID"
 
@@ -75,7 +82,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 	groupId := parseValue(group, []string{attrGroupIdPosix})
 	description := group.GetEqualFoldAttributeValue(attrGroupDescription)
 	profile := map[string]interface{}{
-		"path": groupDN,
+		schemaFieldPath: groupDN,
 	}
 
 	groupRsTraitOptions := []rs.ResourceOption{}
@@ -248,6 +255,20 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 	l = l.With(zap.Stringer("group_dn", groupDN))
 
+	bag, _, err := parsePageToken(token.Token, &v2.ResourceId{
+		ResourceType: resourceTypeGroup.Id,
+		Resource:     resource.Id.Resource,
+	})
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	// If we are paginating through a groupOfURLs expansion, skip the group-entry
+	// fetch — the memberURL and LDAP cursor are already encoded in the bag.
+	if bag.ResourceTypeID() == objectClassGroupOfURLs {
+		return g.grantsFromMemberURL(ctx, resource, nil, bag)
+	}
+
 	var ldapGroup *ldap3.Entry
 	externalId := resource.GetExternalId() //nolint:staticcheck // Deprecated, but needed for raw DN fallback lookup.
 	if externalId == nil {
@@ -272,6 +293,10 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 
 		err := fmt.Errorf("ldap-connector: failed to list group %s members: %w", resource.Id.Resource, err)
 		return nil, "", nil, err
+	}
+
+	if slices.Contains(ldapGroup.GetAttributeValues("objectClass"), objectClassGroupOfURLs) {
+		return g.grantsFromMemberURL(ctx, resource, ldapGroup, bag)
 	}
 
 	memberIDs := parseValues(ldapGroup, []string{attrGroupUniqueMember, attrGroupMember, attrGroupMemberPosix})
@@ -496,6 +521,9 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	principalDNArr := []string{principal.Id.Resource}
 
 	switch {
+	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfURLs"):
+		return nil, fmt.Errorf("baton-ldap: cannot grant membership in dynamic groupOfURLs group %q directly", groupDN)
+
 	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
@@ -543,8 +571,10 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
 	principalDNArr := []string{principal.Id.Resource}
 
-	// TODO: check whether membership is via memberUid, uniqueMember, or member, and modify accordingly
 	switch {
+	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfURLs"):
+		return nil, fmt.Errorf("baton-ldap: cannot revoke membership in dynamic groupOfURLs group %q directly", groupDN)
+
 	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
 		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
 		if err != nil {
@@ -577,6 +607,109 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	}
 
 	return nil, nil
+}
+
+// grantsFromMemberURL expands the current memberURL page of a groupOfURLs entry into grants.
+// group is the LDAP entry for the group; it is non-nil only on the first call (when
+// the bag's current ResourceTypeID is still the initial group state). On continuation
+// calls the memberURL and LDAP page cursor are read directly from the bag.
+func (g *groupResourceType) grantsFromMemberURL(ctx context.Context, resource *v2.Resource, group *ldap3.Entry, bag *pagination.Bag) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	// On the first call the bag holds the initial group state. Replace it with one
+	// page state per memberURL so subsequent SDK calls can skip the group-entry fetch.
+	if bag.ResourceTypeID() != objectClassGroupOfURLs {
+		memberURLs := group.GetAttributeValues(attrGroupMemberURL)
+		if len(memberURLs) == 0 {
+			return nil, "", nil, nil
+		}
+		// Pop the initial group state, then push URLs in reverse order so the
+		// first URL is on top (current).
+		bag.Pop()
+		for i := len(memberURLs) - 1; i >= 0; i-- {
+			bag.Push(pagination.PageState{
+				ResourceTypeID: objectClassGroupOfURLs,
+				ResourceID:     memberURLs[i],
+			})
+		}
+	}
+
+	rawURL := bag.ResourceID()
+	ldapPage := bag.PageToken()
+
+	base, scope, filter, err := parseMemberURL(rawURL)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("ldap-connector: invalid memberURL %q: %w", rawURL, err)
+	}
+
+	entries, nextLDAPPage, err := g.client.LdapSearchWithStringDN(ctx, scope, base, filter, nil, ldapPage, ResourcesPageSize)
+	if err != nil {
+		l.Error("ldap-connector: memberURL search failed", zap.String("url", rawURL), zap.Error(err))
+		return nil, "", nil, fmt.Errorf("ldap-connector: memberURL search failed: %w", err)
+	}
+
+	var rv []*v2.Grant
+	for _, entry := range entries {
+		gr := newGrantFromEntry(resource, entry)
+		annos := annotations.Annotations(gr.GetAnnotations())
+		annos.Update(&v2.GrantImmutable{})
+		gr.SetAnnotations(annos)
+		rv = append(rv, gr)
+	}
+
+	// NextToken either advances the LDAP cursor within this URL (nextLDAPPage != "")
+	// or pops this URL to expose the next one. When all URLs are exhausted Marshal
+	// returns "" which signals done to the SDK.
+	nextToken, err := bag.NextToken(nextLDAPPage)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return rv, nextToken, nil, nil
+}
+
+// parseMemberURL parses an LDAP URL per RFC 4516.
+// Format: ldap://[host]/base?attrs?scope?filter
+// Returns the base DN, ldap scope constant, and filter string.
+func parseMemberURL(rawURL string) (string, int, string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("invalid LDAP URL: %w", err)
+	}
+
+	base := strings.TrimPrefix(u.Path, "/")
+
+	// u.RawQuery holds everything after the first '?': attrs?scope?filter
+	parts := strings.SplitN(u.RawQuery, "?", 3)
+
+	scopeStr := ""
+	if len(parts) > 1 {
+		scopeStr = strings.ToLower(parts[1])
+	}
+
+	var scope int
+	switch scopeStr {
+	case "base":
+		scope = ldap3.ScopeBaseObject
+	case "one":
+		scope = ldap3.ScopeSingleLevel
+	case "sub", "":
+		scope = ldap3.ScopeWholeSubtree
+	default:
+		return "", 0, "", fmt.Errorf("unknown scope %q in LDAP URL", scopeStr)
+	}
+
+	var filter string
+	if len(parts) > 2 && parts[2] != "" {
+		filter, err = url.PathUnescape(parts[2])
+		if err != nil {
+			return "", 0, "", fmt.Errorf("invalid percent-encoding in filter: %w", err)
+		}
+	} else {
+		filter = ldapFilterAnyObject
+	}
+
+	return base, scope, filter, nil
 }
 
 func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,

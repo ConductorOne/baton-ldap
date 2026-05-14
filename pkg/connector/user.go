@@ -182,7 +182,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		"user_id":    userId,
 		"first_name": firstName,
 		"last_name":  lastName,
-		"path":       userDN,
+		schemaFieldPath: userDN,
 	}
 
 	for _, v := range user.Attributes {
@@ -537,19 +537,19 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	data := prof.AsMap()
 	l.Debug("baton-ldap: create-account profile", zap.Any("data", data))
 
-	suffix, ok := data["suffix"].(string)
+	suffix, ok := data[schemaFieldSuffix].(string)
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing suffix")
 	}
-	path, ok := data["path"].(string)
+	path, ok := data[schemaFieldPath].(string)
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing path")
 	}
-	rdnKey, ok := data["rdnKey"].(string)
+	rdnKey, ok := data[schemaFieldRDNKey].(string)
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing rdnKey")
 	}
-	rdnValue, ok := data["rdnValue"].(string)
+	rdnValue, ok := data[schemaFieldRDNValue].(string)
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing rdnValue")
 	}
@@ -595,10 +595,10 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	for k, v := range data {
 		if slices.Contains([]string{
 			"additionalAttributes",
-			"rdnKey",
-			"rdnValue",
-			"path",
-			"suffix",
+			schemaFieldRDNKey,
+			schemaFieldRDNValue,
+			schemaFieldPath,
+			schemaFieldSuffix,
 			"login",
 			"calculatePosixUIDNumber",
 		}, k) {
