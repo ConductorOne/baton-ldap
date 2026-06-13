@@ -16,7 +16,7 @@ var (
 	urlField = field.StringField("url", field.WithDescription(`The URL to connect to. Example: "ldaps://baton.example.com"`))
 
 	baseDNField   = field.StringField("base-dn", field.WithDescription(`The base DN to search from. Example: "DC=baton,DC=example,DC=com"`))
-	passwordField = field.StringField("password", field.WithDescription("The password to bind to the LDAP server"))
+	passwordField = field.StringField("password", field.WithDescription("The password to bind to the LDAP server"), field.WithIsSecret(true))
 	bindDNField   = field.StringField("bind-dn", field.WithDescription("The user DN to bind to the LDAP server"))
 
 	userSearchDNField = field.StringField("user-search-dn",
