@@ -1,10 +1,15 @@
 package connector
 
 import (
+	"context"
 	"testing"
 
 	ldap3 "github.com/go-ldap/ldap/v3"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+
+	"github.com/conductorone/baton-ldap/pkg/ldap"
 )
 
 func TestBuildOUDN(t *testing.T) {
@@ -47,4 +52,53 @@ func TestBuildOUDN(t *testing.T) {
 			require.Equal(t, tt.wantDN, got)
 		})
 	}
+}
+
+func TestLdapGetRaw(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+
+	l, container, err := createConnectorWithContainer(ctx, t, "")
+	require.NoError(t, err)
+
+	// Create an OU to look up.
+	addReq := ldap3.NewAddRequest("ou=rawtest,dc=example,dc=org", nil)
+	addReq.Attribute("objectClass", []string{ldapObjectClassOU, ldapObjectClassTop})
+	addReq.Attribute("ou", []string{"rawtest"})
+	require.NoError(t, l.client.LdapAdd(ctx, addReq))
+
+	// Build a client whose connector-wide filter EXCLUDES organizationalUnit entries.
+	serverURL, err := container.ConnectionString(ctx)
+	require.NoError(t, err)
+	filtered, err := ldap.NewClient(ctx, serverURL, "hunter2", "cn=admin,dc=example,dc=org", false, "(objectClass=person)")
+	require.NoError(t, err)
+
+	t.Run("LdapGetRaw bypasses the connector filter", func(t *testing.T) {
+		e, err := filtered.LdapGetRaw(ctx, "ou=rawtest,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.NoError(t, err)
+		require.Equal(t, "rawtest", e.GetAttributeValue("ou"))
+	})
+
+	t.Run("connector filter would otherwise hide it", func(t *testing.T) {
+		_, err := filtered.LdapGetWithStringDN(ctx, "ou=rawtest,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.Error(t, err)
+	})
+
+	t.Run("absent DN returns error", func(t *testing.T) {
+		_, err := l.client.LdapGetRaw(ctx, "ou=ghost,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.Error(t, err)
+	})
+
+	t.Run("existing non-OU entry returns error under OU filter", func(t *testing.T) {
+		// cn=user01 is seeded by the empty container as an inetOrgPerson (not an OU).
+		// Under the OU filter the base search matches 0 entries -> NotFound: the
+		// verify handler's "DN exists but is not an OU" conflict branch.
+		_, err := l.client.LdapGetRaw(ctx, "cn=user01,ou=users,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.Error(t, err)
+		// Prove the entry really exists (distinguishes this from the absent-DN case).
+		e, err := l.client.LdapGetRaw(ctx, "cn=user01,ou=users,dc=example,dc=org", "(objectClass=*)", []string{"cn"})
+		require.NoError(t, err)
+		// Bitnami's default seed stores the display name "User1" as the cn value,
+		// while the RDN component is "user01". Either way the entry was found.
+		require.NotEmpty(t, e.GetAttributeValue("cn"))
+	})
 }
