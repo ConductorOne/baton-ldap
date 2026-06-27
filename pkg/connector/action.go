@@ -26,11 +26,13 @@ func buildOUDN(name, parentDN string, baseDN *ldap3.DN) (string, error) {
 		return "", fmt.Errorf("base-dn must be configured")
 	}
 	// Don't assume the stored BaseDN is canonical (the test harness builds it via
-	// raw ParseDN). Fold comparison already handles case, but canonicalizing keeps
-	// the rejection message clean and matches the parent's normalization.
-	if cb, err := ldap.CanonicalizeDN(baseDN.String()); err == nil {
-		baseDN = cb
+	// raw ParseDN); canonicalize so the comparison and the rejection message use
+	// normalized values.
+	canonBase, err := ldap.CanonicalizeDN(baseDN.String())
+	if err != nil {
+		return "", fmt.Errorf("invalid base-dn %q: %w", baseDN.String(), err)
 	}
+	baseDN = canonBase
 
 	parentDN = strings.TrimSpace(parentDN)
 	parent := baseDN
