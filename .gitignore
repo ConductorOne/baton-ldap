@@ -19,3 +19,7 @@ dist/
 data/
 docker-compose.yml
 .DS_STORE
+
+# Superpowers planning docs and agent scratch (local only, not part of the connector)
+docs/superpowers/
+.superpowers/
