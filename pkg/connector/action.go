@@ -18,13 +18,13 @@ import (
 )
 
 const (
-	ldapObjectClassOU    = "organizationalUnit"
-	ldapAttrOU           = "ou"
-	ldapAttrDescription  = "description"
-	actionNameCreateOU   = "create_ou"
-	argName              = "name"
-	argParentDN          = "parent_dn"
-	argDescription       = "description"
+	ldapObjectClassOU   = "organizationalUnit"
+	ldapAttrOU          = "ou"
+	ldapAttrDescription = "description"
+	actionNameCreateOU  = "create_ou"
+	argName             = "name"
+	argParentDN         = "parent_dn"
+	argDescription      = "description"
 )
 
 var _ connectorbuilder.GlobalActionProvider = (*LDAP)(nil)
