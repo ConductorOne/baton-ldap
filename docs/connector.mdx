@@ -36,6 +36,16 @@ To use this feature, configure the following account provisioning mappings:
     Automatic UID number calculation assigns `uidNumber` only. You must provide `gidNumber` manually in the **Additional Attributes** mapping. If you set **Calculate the next valid UID Number** to `true`, any `uidNumber` value provided in **Additional Attributes** is ignored.
 </Note>
 
+### Connector actions
+
+Connector actions are custom capabilities that extend C1 automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.
+
+**Global actions** (connector-level):
+
+| Action name | Additional fields | Description |
+| ----------- | ----------------- | ----------- |
+| `create_ou` | `name` (string, required), `parent_dn` (string), `description` (string) | Create an LDAP organizational unit (`organizationalUnit`) under a parent container. `parent_dn` defaults to the configured base DN; a parent outside the base DN is rejected. Idempotent — creating an OU that already exists succeeds. |
+
 
 ## Gather LDAP credentials 
 
