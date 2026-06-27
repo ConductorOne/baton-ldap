@@ -18,12 +18,13 @@ import (
 )
 
 const (
-	ldapObjectClassOU  = "organizationalUnit"
-	ldapAttrOU         = "ou"
-	actionNameCreateOU = "create_ou"
-	argName            = "name"
-	argParentDN        = "parent_dn"
-	argDescription     = "description"
+	ldapObjectClassOU    = "organizationalUnit"
+	ldapAttrOU           = "ou"
+	ldapAttrDescription  = "description"
+	actionNameCreateOU   = "create_ou"
+	argName              = "name"
+	argParentDN          = "parent_dn"
+	argDescription       = "description"
 )
 
 var _ connectorbuilder.GlobalActionProvider = (*LDAP)(nil)
@@ -138,7 +139,7 @@ func (l *LDAP) createOU(ctx context.Context, args *structpb.Struct) (*structpb.S
 	addReq.Attribute("objectClass", []string{ldapObjectClassTop, ldapObjectClassOU})
 	addReq.Attribute(ldapAttrOU, []string{name})
 	if description != "" {
-		addReq.Attribute(argDescription, []string{description})
+		addReq.Attribute(ldapAttrDescription, []string{description})
 	}
 
 	if err := l.client.LdapAdd(ctx, addReq); err != nil {
