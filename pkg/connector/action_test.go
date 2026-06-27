@@ -4,10 +4,13 @@ import (
 	"context"
 	"testing"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/actions"
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 )
@@ -101,4 +104,104 @@ func TestLdapGetRaw(t *testing.T) {
 		// while the RDN component is "user01". Either way the entry was found.
 		require.NotEmpty(t, e.GetAttributeValue("cn"))
 	})
+}
+
+func TestCreateOU(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+
+	l, err := createConnector(ctx, t, "")
+	require.NoError(t, err)
+
+	mkArgs := func(m map[string]interface{}) *structpb.Struct {
+		s, err := structpb.NewStruct(m)
+		require.NoError(t, err)
+		return s
+	}
+
+	t.Run("GlobalActions registers create_ou", func(t *testing.T) {
+		reg := newTestRegistry()
+		require.NoError(t, l.GlobalActions(ctx, reg))
+		require.Contains(t, reg.schemas, "create_ou")
+	})
+
+	t.Run("creates an OU under base-dn", func(t *testing.T) {
+		rv, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "engineering"}))
+		require.NoError(t, err)
+		require.Equal(t, "ou=engineering,dc=example,dc=org", rv.GetFields()["ou_dn"].GetStringValue())
+		require.True(t, rv.GetFields()["success"].GetBoolValue())
+
+		_, err = l.client.LdapGetRaw(ctx, "ou=engineering,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.NoError(t, err)
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "dupe"}))
+		require.NoError(t, err)
+		_, _, err = l.createOU(ctx, mkArgs(map[string]interface{}{"name": "dupe"}))
+		require.NoError(t, err)
+	})
+
+	t.Run("sets description", func(t *testing.T) {
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "withdesc", "description": "My OU"}))
+		require.NoError(t, err)
+		e, err := l.client.LdapGetRaw(ctx, "ou=withdesc,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"description"})
+		require.NoError(t, err)
+		require.Equal(t, "My OU", e.GetAttributeValue("description"))
+	})
+
+	t.Run("escapes comma in name", func(t *testing.T) {
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "A, B"}))
+		require.NoError(t, err)
+		_, err = l.client.LdapGetRaw(ctx, "ou=A\\, B,dc=example,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects out-of-scope parent_dn and writes nothing", func(t *testing.T) {
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "x", "parent_dn": "dc=other,dc=org"}))
+		require.Error(t, err)
+		// Guard against a fail-open regression: the OU must not have been written.
+		_, gerr := l.client.LdapGetRaw(ctx, "ou=x,dc=other,dc=org", "(objectClass=organizationalUnit)", []string{"ou"})
+		require.Error(t, gerr)
+	})
+
+	t.Run("rejects empty name", func(t *testing.T) {
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "   "}))
+		require.Error(t, err)
+	})
+
+	t.Run("conflict when DN already holds a non-OU entry", func(t *testing.T) {
+		// Seed a non-OU entry at ou=conflict,dc=example,dc=org.
+		// extensibleObject (auxiliary only) is rejected by the strict OpenLDAP 2.6
+		// schema enforcement in this container ("no structural object class provided").
+		// groupOfNames is a structural class that permits an ou RDN and is accepted.
+		conflict := ldap3.NewAddRequest("ou=conflict,dc=example,dc=org", nil)
+		conflict.Attribute("objectClass", []string{ldapObjectClassTop, "groupOfNames"})
+		conflict.Attribute("cn", []string{"conflict"})
+		conflict.Attribute("ou", []string{"conflict"})
+		conflict.Attribute("member", []string{"cn=admin,dc=example,dc=org"})
+		require.NoError(t, l.client.LdapAdd(ctx, conflict))
+
+		// createOU's LdapAdd hits EntryAlreadyExists (masked to nil); verify then
+		// finds the DN is not an organizationalUnit -> error.
+		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "conflict"}))
+		require.Error(t, err)
+	})
+}
+
+type testRegistry struct {
+	schemas map[string]*v2.BatonActionSchema
+}
+
+func newTestRegistry() *testRegistry {
+	return &testRegistry{schemas: map[string]*v2.BatonActionSchema{}}
+}
+
+func (r *testRegistry) Register(_ context.Context, schema *v2.BatonActionSchema, _ actions.ActionHandler) error {
+	r.schemas[schema.GetName()] = schema
+	return nil
+}
+
+func (r *testRegistry) RegisterAction(_ context.Context, _ string, schema *v2.BatonActionSchema, _ actions.ActionHandler) error {
+	r.schemas[schema.GetName()] = schema
+	return nil
 }
