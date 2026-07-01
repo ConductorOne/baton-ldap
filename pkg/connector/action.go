@@ -14,6 +14,8 @@ import (
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -44,20 +46,19 @@ func buildOUDN(name, parentDN string, baseDN *ldap3.DN) (string, error) {
 	// Don't assume the stored BaseDN is canonical (the test harness builds it via
 	// raw ParseDN); canonicalize so the comparison and the rejection message use
 	// normalized values.
-	canonBase, err := ldap.CanonicalizeDN(baseDN.String())
+	rawBaseDN := baseDN.String()
+	baseDN, err := ldap.CanonicalizeDN(rawBaseDN)
 	if err != nil {
-		return "", fmt.Errorf("invalid base-dn %q: %w", baseDN.String(), err)
+		return "", fmt.Errorf("invalid base-dn %q: %w", rawBaseDN, err)
 	}
-	baseDN = canonBase
 
 	parentDN = strings.TrimSpace(parentDN)
 	parent := baseDN
 	if parentDN != "" {
-		p, err := ldap.CanonicalizeDN(parentDN)
+		parent, err = ldap.CanonicalizeDN(parentDN)
 		if err != nil {
 			return "", fmt.Errorf("invalid parent_dn %q: %w", parentDN, err)
 		}
-		parent = p
 	}
 
 	if !baseDN.EqualFold(parent) && !baseDN.AncestorOfFold(parent) {
@@ -124,13 +125,18 @@ func (l *LDAP) GlobalActions(ctx context.Context, registry actions.ActionRegistr
 func (l *LDAP) createOU(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
-	name := strings.TrimSpace(args.GetFields()[argName].GetStringValue())
-	parentArg := args.GetFields()[argParentDN].GetStringValue()
-	description := strings.TrimSpace(args.GetFields()[argDescription].GetStringValue())
+	name, err := actions.RequireStringArg(args, argName)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: create_ou: %v", err)
+	}
+	name = strings.TrimSpace(name)
+	parentArg, _ := actions.GetStringArg(args, argParentDN)
+	description, _ := actions.GetStringArg(args, argDescription)
+	description = strings.TrimSpace(description)
 
 	ouDN, err := buildOUDN(name, parentArg, l.config.BaseDN)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ldap-connector: create_ou: %w", err)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: create_ou: %v", err)
 	}
 
 	log.Debug("creating organizational unit", zap.String("dn", ouDN))
@@ -156,10 +162,5 @@ func (l *LDAP) createOU(ctx context.Context, args *structpb.Struct) (*structpb.S
 		return nil, nil, fmt.Errorf("ldap-connector: create_ou: ou %q was not created: %w", ouDN, err)
 	}
 
-	return &structpb.Struct{
-		Fields: map[string]*structpb.Value{
-			"ou_dn":   structpb.NewStringValue(ouDN),
-			"success": structpb.NewBoolValue(true),
-		},
-	}, nil, nil
+	return actions.NewReturnValues(true, actions.NewStringReturnField("ou_dn", ouDN)), nil, nil
 }
