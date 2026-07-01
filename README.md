@@ -52,6 +52,25 @@ To provision an account from the command line, you'll need to provide the login,
 .\baton-ldap.exe --base-dn "DC=baton-dev,DC=d2,DC=ductone,DC=com" --password "password" -p --create-account-login 'example-user' --create-account-profile "{\"rdnKey\":\"uid\",\"path\":\"cn=staged users,cn=accounts,cn=provisioning\",\"suffix\":\"dc=example,dc=test\",\"objectClass\":[\"top\",\"person\",\"organizationalperson\",\"posixAccount\"],\"additionalAttributes\":{\"cn\":\"Example User\",\"sn\":\"User\",\"homeDirectory\":\"\",\"uidNumber\":\"-1\",\"gidNumber\":\"-1\"}}"'
 ```
 
+# Actions
+
+## `create_ou`
+
+Creates an LDAP organizational unit (`organizationalUnit`) under a parent container.
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The OU name. Used as the `ou` attribute and the RDN (`ou=<name>`). |
+| `parent_dn` | no | The container DN to create the OU under. Defaults to the configured `base-dn`. |
+| `description` | no | Sets the `description` attribute on the OU. |
+
+Returns `ou_dn` (the created OU's DN) and `success`.
+
+**Notes:**
+- `base-dn` must be configured; the parent DN must be at or under it, or the action is rejected (fail-closed).
+- The action is idempotent: creating an OU that already exists succeeds.
+- The bind account must have permission to create entries at the target location.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose
