@@ -209,6 +209,28 @@ func (c *Client) LdapGetWithStringDN(ctx context.Context,
 	return entries[0], nil
 }
 
+// LdapGetRaw fetches a single entry by DN with a base-scoped search that does
+// NOT apply the connector-wide filter. Used by write-verification paths that
+// must see an entry regardless of the operator's configured filter. Returns a
+// NotFound error when the entry is absent or matches zero entries.
+func (c *Client) LdapGetRaw(ctx context.Context,
+	dn string,
+	filter string,
+	attrNames []string,
+) (*ldap.Entry, error) {
+	entries, _, err := c._ldapSearch(ctx, ldap.ScopeBaseObject, dn, filter, attrNames, "", 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, status.Errorf(codes.NotFound, "baton-ldap: no such object")
+	}
+	if len(entries) > 1 {
+		return nil, fmt.Errorf("multiple entries found: %s", dn)
+	}
+	return entries[0], nil
+}
+
 func (c *Client) LdapSearch(ctx context.Context,
 	searchScope int,
 	searchDN *ldap.DN,
