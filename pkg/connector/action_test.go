@@ -465,6 +465,20 @@ func TestUpdateUserAttrs(t *testing.T) {
 		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
 	})
 
+	t.Run("server rejection surfaces as an error and does not partially apply", func(t *testing.T) {
+		// sn is a MUST attribute for person/inetOrgPerson, so clearing it is a
+		// schema violation. The action must report the rejection as an error
+		// (never a false success) and must leave the entry untouched. This guards
+		// the modify error-propagation path (the handler deliberately uses the
+		// non-swallowing LdapModifyStrict so server rejections are never masked).
+		_, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{attrLastName: ""}, []string{attrLastName}))
+		require.Error(t, err)
+		e, gerr := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{attrLastName})
+		require.NoError(t, gerr)
+		require.NotEmpty(t, e.GetAttributeValues(attrLastName))
+	})
+
 	t.Run("empty mask is a no-op success", func(t *testing.T) {
 		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
 			map[string]interface{}{"description": "x"}, []string{}))
