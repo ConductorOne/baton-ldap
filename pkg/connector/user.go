@@ -28,6 +28,7 @@ const (
 	userObjectClasses     = "(objectClass=inetOrgPerson)(objectClass=person)(objectClass=user)(objectClass=organizationalPerson)"
 	userFilter            = "(|" + userObjectClasses + ")"
 	attrUserUID           = "uid"
+	attrUserPassword      = "userPassword"
 	attrUserCommonName    = "cn"
 	attrFirstName         = "givenName"
 	attrLastName          = "sn"
@@ -179,9 +180,9 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	userDN := udn.String()
 
 	profile := map[string]interface{}{
-		"user_id":    userId,
-		"first_name": firstName,
-		"last_name":  lastName,
+		"user_id":       userId,
+		"first_name":    firstName,
+		"last_name":     lastName,
 		schemaFieldPath: userDN,
 	}
 
@@ -397,9 +398,23 @@ func (o *userResourceType) CreateAccount(
 
 	dn, attrs, err := o.extractProfile(ctx, accountInfo)
 	if err != nil {
-		l.Error("baton-ldap: create-account failed to extract profile", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		l.Error("baton-ldap: create-account failed to extract profile", zap.Error(err), zap.String("login", accountInfo.GetLogin()))
 		return nil, nil, nil, err
 	}
+
+	// Resolve the C1-managed password and fold it into the initial add. Adding
+	// userPassword at creation (rather than a separate post-add modify) lets
+	// directories that require it at creation succeed without a hard-coded
+	// placeholder mapping. NoPassword leaves userPassword unset.
+	password := ""
+	if credentialOptions.GetNoPassword() == nil {
+		password, err = crypto.GeneratePassword(ctx, credentialOptions)
+		if err != nil {
+			l.Error("baton-ldap: create-account failed to generate password", zap.Error(err), zap.String("dn", dn))
+			return nil, nil, nil, err
+		}
+	}
+	attrs = withUserPassword(attrs, password)
 
 	user := &ldap3.AddRequest{
 		DN:         dn,
@@ -408,13 +423,9 @@ func (o *userResourceType) CreateAccount(
 
 	err = o.client.LdapAdd(ctx, user)
 	if err != nil {
-		l.Error("baton-ldap: create-account failed to create account", zap.Error(err), zap.Any("userParams", user))
-		return nil, nil, nil, err
-	}
-
-	ptd, annos, err := o.setPassword(ctx, dn, credentialOptions)
-	if err != nil {
-		l.Error("baton-ldap: create-account failed to set password", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		// Error logs are exported to ConductorOne; do not log user, its
+		// Attributes now carry the plaintext userPassword.
+		l.Error("baton-ldap: create-account failed to create account", zap.Error(err), zap.String("dn", dn))
 		return nil, nil, nil, err
 	}
 
@@ -425,14 +436,14 @@ func (o *userResourceType) CreateAccount(
 
 	ur, err := userResource(ctx, acc)
 	if err != nil {
-		l.Error("baton-ldap: create-account failed to create resource", zap.Error(err), zap.Any("accountInfo", accountInfo))
+		l.Error("baton-ldap: create-account failed to create resource", zap.Error(err), zap.String("dn", dn))
 		return nil, nil, nil, err
 	}
 	resp := &v2.CreateAccountResponse_SuccessResult{
 		Resource: ur,
 	}
 
-	return resp, ptd, annos, nil
+	return resp, plaintextPasswordData(password), nil, nil
 }
 
 func (o *userResourceType) Rotate(ctx context.Context, resourceId *v2.ResourceId, credentialOptions *v2.LocalCredentialOptions) ([]*v2.PlaintextData, annotations.Annotations, error) {
@@ -483,7 +494,7 @@ func (o *userResourceType) setPassword(
 	change := ldap3.Change{
 		Operation: ldap3.DeleteAttribute,
 		Modification: ldap3.PartialAttribute{
-			Type: "userPassword",
+			Type: attrUserPassword,
 		},
 	}
 
@@ -497,7 +508,7 @@ func (o *userResourceType) setPassword(
 		change = ldap3.Change{
 			Operation: ldap3.ReplaceAttribute,
 			Modification: ldap3.PartialAttribute{
-				Type: "userPassword",
+				Type: attrUserPassword,
 				Vals: []string{password},
 			},
 		}
@@ -512,19 +523,44 @@ func (o *userResourceType) setPassword(
 		l.Error("baton-ldap: failed to set password", zap.Error(err), zap.Any("dn", dn))
 		return nil, nil, err
 	}
-	var ptd []*v2.PlaintextData
-	if password != "" {
-		ptd = []*v2.PlaintextData{
-			{
-				Name:        "password",
-				Description: "The password for the user",
-				Schema:      "string",
-				Bytes:       []byte(password),
-			},
-		}
-	}
+	ptd := plaintextPasswordData(password)
 
 	return ptd, nil, nil
+}
+
+// withUserPassword returns attrs with every existing userPassword attribute
+// removed, plus the managed userPassword appended when password is non-empty.
+// LDAP attribute names are case-insensitive, so the match is case-folded. This
+// dedupes a hard-coded userPassword mapping (and collapses any accidental
+// multi-entry) so the managed value is the only one sent on the add.
+func withUserPassword(attrs []ldap3.Attribute, password string) []ldap3.Attribute {
+	out := make([]ldap3.Attribute, 0, len(attrs)+1)
+	for _, a := range attrs {
+		if strings.EqualFold(a.Type, attrUserPassword) {
+			continue
+		}
+		out = append(out, a)
+	}
+	if password != "" {
+		out = append(out, toAttr(attrUserPassword, password))
+	}
+	return out
+}
+
+// plaintextPasswordData is the PlaintextData payload C1 stores/vaults for a
+// newly set password. Returns nil for an empty password (e.g. NoPassword).
+func plaintextPasswordData(password string) []*v2.PlaintextData {
+	if password == "" {
+		return nil
+	}
+	return []*v2.PlaintextData{
+		{
+			Name:        "password",
+			Description: "The password for the user",
+			Schema:      "string",
+			Bytes:       []byte(password),
+		},
+	}
 }
 
 func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.AccountInfo) (string, []ldap3.Attribute, error) {
