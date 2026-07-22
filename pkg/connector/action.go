@@ -29,7 +29,6 @@ const (
 	argDescription      = "description"
 
 	actionNameUpdateUserAttrs = "update_user_attrs"
-	argResourceType           = "resource_type"
 	argResourceID             = "resource_id"
 	argAttrs                  = "attrs"
 	argAttrsUpdateMask        = "attrs_update_mask"
@@ -147,12 +146,6 @@ func updateUserAttrsActionSchema() *v2.BatonActionSchema {
 			v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE,
 		},
 		Arguments: []*config_sdk.Field{
-			{
-				Name:        argResourceType,
-				DisplayName: "Resource Type",
-				Description: "The type of resource to update. Always \"user\" for this action.",
-				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
-			},
 			{
 				Name:        argResourceID,
 				DisplayName: "Resource ID",

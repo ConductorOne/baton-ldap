@@ -369,7 +369,10 @@ func TestUpdateUserAttrs(t *testing.T) {
 			maskVals[i] = m
 		}
 		s, err := structpb.NewStruct(map[string]interface{}{
-			argResourceType:    "user",
+			// resource_type is no longer a declared argument; include it as a raw
+			// key to confirm the handler still tolerates the profile-push pipeline
+			// sending it.
+			"resource_type":    "user",
 			argResourceID:      dn,
 			argAttrs:           attrs,
 			argAttrsUpdateMask: maskVals,
