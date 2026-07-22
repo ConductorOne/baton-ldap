@@ -334,7 +334,11 @@ func (l *LDAP) updateUserAttrs(ctx context.Context, args *structpb.Struct) (*str
 				fields = append(fields, zap.String("attr:"+ch.Modification.Type, fmt.Sprintf("len=%d", len(ch.Modification.Vals[0]))))
 			}
 		}
-		log.Error("update_user_attrs: modify failed", fields...)
+		// Warn, not Error: most modify rejections here (permission denied, schema
+		// violations) are expected customer-config conditions, not connector bugs,
+		// so they shouldn't trip Error-level alerting. The error is still returned
+		// and surfaced as a FAILED action by the SDK.
+		log.Warn("update_user_attrs: modify failed", fields...)
 		return nil, nil, fmt.Errorf("ldap-connector: update_user_attrs: failed to modify user %q: %w", acc.DN, err)
 	}
 

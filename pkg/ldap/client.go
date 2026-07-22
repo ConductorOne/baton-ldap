@@ -390,7 +390,11 @@ func (c *Client) LdapModifyStrict(ctx context.Context, modifyRequest *ldap.Modif
 		return client.conn.Modify(modifyRequest)
 	})
 	if err != nil {
-		l.Error("baton-ldap: client failed to modify record (strict)", zap.Error(err))
+		// Debug, not Error: getConnection already logs the raw error, and the
+		// sole caller (the update_user_attrs action) logs a contextual error and
+		// decides severity. Avoids logging an expected, caller-handled rejection
+		// at Error multiple times.
+		l.Debug("baton-ldap: client failed to modify record (strict)", zap.Error(err))
 		return err
 	}
 
