@@ -81,8 +81,8 @@ func parseUserNames(user *ldap.Entry) (string, string, string) {
 	return firstName, lastName, displayName
 }
 
-func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
-	userStatus := v2.UserTrait_Status_STATUS_UNSPECIFIED
+func parseUserStatus(user *ldap.Entry) (v2.Status_ResourceStatus, error) {
+	userStatus := v2.Status_RESOURCE_STATUS_UNSPECIFIED
 
 	// Currently only UserAccountControlFlag from Microsoft or nsAccountLock from FreeIPA is supported
 	userAccountControlFlag := user.GetEqualFoldAttributeValue(attrUserAccountControl)
@@ -96,17 +96,17 @@ func parseUserStatus(user *ldap.Entry) (v2.UserTrait_Status_Status, error) {
 		// Check if the ACCOUNTDISABLE flag (bit 2) is set
 		// https://learn.microsoft.com/en-us/troubleshoot/windows-server/identity/useraccountcontrol-manipulate-account-properties
 		if (userAccountControlFlag & 2) == 0 {
-			userStatus = v2.UserTrait_Status_STATUS_ENABLED
+			userStatus = v2.Status_RESOURCE_STATUS_ENABLED
 		} else {
-			userStatus = v2.UserTrait_Status_STATUS_DISABLED
+			userStatus = v2.Status_RESOURCE_STATUS_DISABLED
 		}
 		return userStatus, nil
 	} else if nsAccountLockFlag != "" {
 		locked, _ := strconv.ParseBool(nsAccountLockFlag)
 		if locked {
-			userStatus = v2.UserTrait_Status_STATUS_DISABLED
+			userStatus = v2.Status_RESOURCE_STATUS_DISABLED
 		} else {
-			userStatus = v2.UserTrait_Status_STATUS_ENABLED
+			userStatus = v2.Status_RESOURCE_STATUS_ENABLED
 		}
 	}
 
@@ -203,13 +203,12 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 	}
 
 	// If the user status is not set, default to enabled
-	if userStatus == v2.UserTrait_Status_STATUS_UNSPECIFIED {
-		userStatus = v2.UserTrait_Status_STATUS_ENABLED
+	if userStatus == v2.Status_RESOURCE_STATUS_UNSPECIFIED {
+		userStatus = v2.Status_RESOURCE_STATUS_ENABLED
 	}
 
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithEmail(user.GetEqualFoldAttributeValue(attrUserMail), true),
-		rs.WithStatus(userStatus),
 	}
 
 	rawObjectClasses := user.GetEqualFoldAttributeValues("objectClass")
@@ -232,12 +231,17 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		profile["login"] = login
 	}
 
-	userTraitOptions = append(userTraitOptions, rs.WithUserProfile(profile))
+	// profile, status, and created_at are resource-level attributes (baton-sdk
+	// moved them off the user trait), so they go on NewUserResource as options.
+	resourceOptions := []rs.ResourceOption{
+		rs.WithResourceProfile(profile),
+		rs.WithResourceStatus(userStatus, ""),
+	}
 
 	createdAt := user.GetEqualFoldAttributeValue(attrUserCreatedAt)
 	createTime, err := time.Parse("20060102150405Z0700", createdAt)
 	if err == nil {
-		userTraitOptions = append(userTraitOptions, rs.WithCreatedAt(createTime))
+		resourceOptions = append(resourceOptions, rs.WithResourceCreatedAt(createTime))
 	}
 
 	// Try openldap format first, then fall back to Active Directory's format
@@ -261,6 +265,7 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		resourceTypeUser,
 		userDN,
 		userTraitOptions,
+		resourceOptions...,
 	)
 	if err != nil {
 		return nil, err
