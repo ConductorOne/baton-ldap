@@ -98,9 +98,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 		profile["gid"] = groupId
 	}
 
-	groupTraitOptions := []rs.GroupTraitOption{
-		rs.WithGroupProfile(profile),
-	}
+	groupRsTraitOptions = append(groupRsTraitOptions, rs.WithResourceProfile(profile))
 
 	groupName := group.GetEqualFoldAttributeValue(attrGroupCommonName)
 
@@ -108,7 +106,7 @@ func groupResource(ctx context.Context, group *ldap.Entry) (*v2.Resource, error)
 		groupName,
 		resourceTypeGroup,
 		groupDN,
-		groupTraitOptions,
+		nil,
 		groupRsTraitOptions...,
 	)
 	if err != nil {

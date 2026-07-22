@@ -50,16 +50,13 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 		schemaFieldPath:   roleDN,
 	}
 
-	roleTraitOptions := []rs.RoleTraitOption{
-		rs.WithRoleProfile(profile),
-	}
-
 	roleName := role.GetEqualFoldAttributeValue(attrRoleCommonName)
 	resource, err := rs.NewRoleResource(
 		roleName,
 		resourceTypeRole,
 		roleDN,
-		roleTraitOptions,
+		nil,
+		rs.WithResourceProfile(profile),
 	)
 	if err != nil {
 		return nil, err
