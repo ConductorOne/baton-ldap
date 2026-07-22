@@ -47,11 +47,7 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 	roleDN := rdn.String()
 	profile := map[string]interface{}{
 		"role_description": role.GetEqualFoldAttributeValue(attrRoleDescription),
-		schemaFieldPath:   roleDN,
-	}
-
-	roleTraitOptions := []rs.RoleTraitOption{
-		rs.WithRoleProfile(profile),
+		schemaFieldPath:    roleDN,
 	}
 
 	roleName := role.GetEqualFoldAttributeValue(attrRoleCommonName)
@@ -59,7 +55,9 @@ func roleResource(ctx context.Context, role *ldap.Entry) (*v2.Resource, error) {
 		roleName,
 		resourceTypeRole,
 		roleDN,
-		roleTraitOptions,
+		nil,
+		// profile is a resource-level attribute in baton-sdk.
+		rs.WithResourceProfile(profile),
 	)
 	if err != nil {
 		return nil, err
