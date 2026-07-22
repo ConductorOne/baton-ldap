@@ -45,9 +45,23 @@ Connector actions are custom capabilities that extend C1 automations with app-sp
 | Action name | Additional fields | Description |
 | ----------- | ----------------- | ----------- |
 | `create_ou` | `name` (string, required), `parent_dn` (string), `description` (string) | Create an LDAP organizational unit (`organizationalUnit`) under a parent container. `parent_dn` defaults to the configured base DN; a parent outside the base DN is rejected. Idempotent — creating an OU that already exists succeeds. |
+| `update_user_attrs` | `resource_id` (string, required), `attrs` (string map, required), `attrs_update_mask` (string list, required), `resource_type` (string) | Set or clear arbitrary LDAP attributes on an existing user. `resource_id` is the user's DN; `attrs` maps attribute name to value (an empty value clears the attribute); only names listed in `attrs_update_mask` are written. This action also backs C1's [push profile](/product/admin/account-provisioning) flow for LDAP users. |
 
 <Note>
   To use `create_ou`, the connector's bind account must have permission to add child entries under the target parent DN (by default, the configured base DN). For OpenLDAP and similar servers, this is write/add access on the parent container; for Active Directory, delegate the **Create Organizational Unit objects** right on the parent OU.
+</Note>
+
+The `update_user_attrs` action returns `success` (bool), `applied` (the number of attributes changed), and `skipped` (mask entries that were not written). Re-running with values that already match is a no-op (`applied` is `0`).
+
+<Note>
+  `update_user_attrs` is intended for generic LDAP directories (Active Directory and FreeIPA have their own connectors). It applies the following rules:
+
+  - **Scope:** only entries within the configured user search scope (`user-search-dn`, falling back to `base-dn`) can be modified; out-of-scope or non-user DNs are rejected.
+  - **Single-valued:** each attribute is set to a single value; multi-valued and binary attributes are not supported.
+  - **Not modifiable:** password attributes (`userPassword`, or any name containing `password` — use credential rotation instead) and `objectClass` are rejected; the user's RDN attribute (for example `cn` when the DN is `cn=jdoe,...`) is skipped, since renaming requires a different operation.
+  - **Profile keys:** C1's profile field names are mapped to their LDAP attributes (`first_name` → `givenName`, `last_name` → `sn`, `display_name` → `displayName`, `user_id` → `uid`); any other name is treated as a raw LDAP attribute name.
+
+  The connector's bind account must have permission to modify the target entry.
 </Note>
 
 
