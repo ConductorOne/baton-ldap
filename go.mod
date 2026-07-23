@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.25.2
 
 require (
-	github.com/conductorone/baton-sdk v0.19.1
+	github.com/conductorone/baton-sdk v0.20.1
 	github.com/deckarep/golang-set/v2 v2.9.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -19,6 +19,7 @@ require (
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/DataDog/zstd v1.5.7 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
@@ -110,7 +111,7 @@ require (
 )
 
 require (
-	filippo.io/age v1.2.1 // indirect
+	filippo.io/age v1.3.1 // indirect
 	filippo.io/edwards25519 v1.1.1 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.7 // indirect
