@@ -10,6 +10,8 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -185,6 +187,307 @@ func TestCreateOU(t *testing.T) {
 		// finds the DN is not an organizationalUnit -> error.
 		_, _, err := l.createOU(ctx, mkArgs(map[string]interface{}{"name": "conflict"}))
 		require.Error(t, err)
+	})
+}
+
+func mustDN(t *testing.T, s string) *ldap3.DN {
+	t.Helper()
+	dn, err := ldap3.ParseDN(s)
+	require.NoError(t, err)
+	return dn
+}
+
+func entryWith(dn string, attrs map[string][]string) *ldap.Entry {
+	e := &ldap3.Entry{DN: dn}
+	for name, vals := range attrs {
+		e.Attributes = append(e.Attributes, &ldap3.EntryAttribute{Name: name, Values: vals})
+	}
+	return e
+}
+
+func TestAssertDNInScope(t *testing.T) {
+	scope := mustDN(t, "ou=users,dc=example,dc=org")
+	tests := []struct {
+		name    string
+		target  string
+		scope   *ldap3.DN
+		wantErr bool
+	}{
+		{"descendant", "cn=user01,ou=users,dc=example,dc=org", scope, false},
+		{"equal", "ou=users,dc=example,dc=org", scope, false},
+		{"case-insensitive", "CN=User01,OU=Users,DC=Example,DC=Org", scope, false},
+		{"sibling out of scope", "cn=user01,ou=admins,dc=example,dc=org", scope, true},
+		{"ancestor out of scope", "dc=example,dc=org", scope, true},
+		{"nil scope", "cn=user01,ou=users,dc=example,dc=org", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := assertDNInScope(mustDN(t, tt.target), tt.scope)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestResolveUpdateAttrName(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantAttr string
+		wantSkip bool
+	}{
+		{"first_name", attrFirstName, false},
+		{"last_name", attrLastName, false},
+		{"display_name", attrUserDisplayName, false},
+		{"user_id", attrUserUID, false},
+		{"First_Name", attrFirstName, false}, // case-insensitive
+		{"login", "", true},
+		{"path", "", true},
+		{"description", "description", false}, // raw pass-through
+		{"telephoneNumber", "telephoneNumber", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			attr, skip := resolveUpdateAttrName(tc.in)
+			require.Equal(t, tc.wantSkip, skip)
+			if !skip {
+				require.Equal(t, tc.wantAttr, attr)
+			}
+		})
+	}
+}
+
+func TestBuildUserAttrChanges(t *testing.T) {
+	dn := mustDN(t, "cn=user01,ou=users,dc=example,dc=org")
+	entry := entryWith("cn=user01,ou=users,dc=example,dc=org", map[string][]string{
+		"cn":          {"user01"},
+		"description": {"existing"},
+		"title":       {"Engineer"},
+		"mail":        {"user01@example.org"},
+	})
+
+	t.Run("set new value", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"telephoneNumber": "555-1234"}, []string{"telephoneNumber"})
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Equal(t, "telephoneNumber", changes[0].Modification.Type)
+		require.Equal(t, []string{"555-1234"}, changes[0].Modification.Vals)
+	})
+
+	t.Run("clear existing attribute", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"description": ""}, []string{"description"})
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Empty(t, changes[0].Modification.Vals)
+	})
+
+	t.Run("no-op when value already set", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"title": "Engineer"}, []string{"title"})
+		require.NoError(t, err)
+		require.Empty(t, changes)
+	})
+
+	t.Run("no-op when clearing an absent attribute", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"telephoneNumber": ""}, []string{"telephoneNumber"})
+		require.NoError(t, err)
+		require.Empty(t, changes)
+	})
+
+	t.Run("alias resolves to real attribute", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"first_name": "Jane"}, []string{"first_name"})
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, attrFirstName, changes[0].Modification.Type)
+	})
+
+	t.Run("mask entry without value is skipped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"title": "Manager"}, []string{"title", "mail"})
+		require.NoError(t, err)
+		require.Equal(t, []string{"mail"}, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, "title", changes[0].Modification.Type)
+	})
+
+	t.Run("synthetic keys skipped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"login": "x", "path": "y"}, []string{"login", "path"})
+		require.NoError(t, err)
+		require.Empty(t, changes)
+		require.ElementsMatch(t, []string{"login", "path"}, skipped)
+	})
+
+	t.Run("RDN attribute skipped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"cn": "renamed"}, []string{"cn"})
+		require.NoError(t, err)
+		require.Empty(t, changes)
+		require.Equal(t, []string{"cn"}, skipped)
+	})
+
+	t.Run("password attribute rejected", func(t *testing.T) {
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"userPassword": "secret"}, []string{"userPassword"})
+		require.Error(t, err)
+	})
+
+	t.Run("objectClass rejected", func(t *testing.T) {
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"objectClass": "person"}, []string{"objectClass"})
+		require.Error(t, err)
+	})
+
+	t.Run("duplicate resolved attr deduped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"user_id": "u1", "uid": "u2"}, []string{"user_id", "uid"})
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, attrUserUID, changes[0].Modification.Type)
+		require.Equal(t, []string{"uid"}, skipped)
+	})
+}
+
+func TestUpdateUserAttrs(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+
+	l, err := createConnector(ctx, t, "")
+	require.NoError(t, err)
+
+	mkArgs := func(dn string, attrs map[string]interface{}, mask []string) *structpb.Struct {
+		maskVals := make([]interface{}, len(mask))
+		for i, m := range mask {
+			maskVals[i] = m
+		}
+		s, err := structpb.NewStruct(map[string]interface{}{
+			// resource_type is no longer a declared argument; include it as a raw
+			// key to confirm the handler still tolerates the profile-push pipeline
+			// sending it.
+			"resource_type":    "user",
+			argResourceID:      dn,
+			argAttrs:           attrs,
+			argAttrsUpdateMask: maskVals,
+		})
+		require.NoError(t, err)
+		return s
+	}
+
+	const userDN = "cn=user01,ou=users,dc=example,dc=org"
+
+	t.Run("GlobalActions registers update_user_attrs", func(t *testing.T) {
+		reg := newTestRegistry()
+		require.NoError(t, l.GlobalActions(ctx, reg))
+		require.Contains(t, reg.schemas, "update_user_attrs")
+	})
+
+	t.Run("sets an attribute", func(t *testing.T) {
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": "hello world"}, []string{"description"}))
+		require.NoError(t, err)
+		require.True(t, rv.GetFields()["success"].GetBoolValue())
+		require.Equal(t, float64(1), rv.GetFields()["applied"].GetNumberValue())
+
+		e, err := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{"description"})
+		require.NoError(t, err)
+		require.Equal(t, "hello world", e.GetAttributeValue("description"))
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		_, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": "same"}, []string{"description"}))
+		require.NoError(t, err)
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": "same"}, []string{"description"}))
+		require.NoError(t, err)
+		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
+	})
+
+	t.Run("clears an attribute", func(t *testing.T) {
+		_, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": "temp"}, []string{"description"}))
+		require.NoError(t, err)
+		_, _, err = l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": ""}, []string{"description"}))
+		require.NoError(t, err)
+		e, err := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{"description"})
+		require.NoError(t, err)
+		require.Empty(t, e.GetAttributeValues("description"))
+	})
+
+	t.Run("sets multiple attributes atomically", func(t *testing.T) {
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"title": "Engineer", "telephoneNumber": "555-0100"},
+			[]string{"title", "telephoneNumber"}))
+		require.NoError(t, err)
+		require.Equal(t, float64(2), rv.GetFields()["applied"].GetNumberValue())
+	})
+
+	t.Run("mask entry with no value is skipped", func(t *testing.T) {
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"title": "Lead"}, []string{"title", "mail"}))
+		require.NoError(t, err)
+		skipped := rv.GetFields()["skipped"].GetListValue().GetValues()
+		require.Len(t, skipped, 1)
+		require.Equal(t, "mail", skipped[0].GetStringValue())
+	})
+
+	t.Run("out-of-scope DN returns NotFound", func(t *testing.T) {
+		_, _, err := l.updateUserAttrs(ctx, mkArgs("cn=user01,ou=other,dc=example,dc=org",
+			map[string]interface{}{"description": "x"}, []string{"description"}))
+		require.Error(t, err)
+		require.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	t.Run("missing user returns NotFound", func(t *testing.T) {
+		_, _, err := l.updateUserAttrs(ctx, mkArgs("cn=ghost,ou=users,dc=example,dc=org",
+			map[string]interface{}{"description": "x"}, []string{"description"}))
+		require.Error(t, err)
+		require.Equal(t, codes.NotFound, status.Code(err))
+	})
+
+	t.Run("password attribute rejected", func(t *testing.T) {
+		_, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"userPassword": "secret"}, []string{"userPassword"}))
+		require.Error(t, err)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
+	})
+
+	t.Run("RDN attribute skipped, not written", func(t *testing.T) {
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"cn": "renamed"}, []string{"cn"}))
+		require.NoError(t, err)
+		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
+	})
+
+	t.Run("server rejection surfaces as an error and does not partially apply", func(t *testing.T) {
+		// sn is a MUST attribute for person/inetOrgPerson, so clearing it is a
+		// schema violation. The action must report the rejection as an error
+		// (never a false success) and must leave the entry untouched. This guards
+		// the modify error-propagation path (the handler deliberately uses the
+		// non-swallowing LdapModifyStrict so server rejections are never masked).
+		_, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{attrLastName: ""}, []string{attrLastName}))
+		require.Error(t, err)
+		e, gerr := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{attrLastName})
+		require.NoError(t, gerr)
+		require.NotEmpty(t, e.GetAttributeValues(attrLastName))
+	})
+
+	t.Run("empty mask is a no-op success", func(t *testing.T) {
+		rv, _, err := l.updateUserAttrs(ctx, mkArgs(userDN,
+			map[string]interface{}{"description": "x"}, []string{}))
+		require.NoError(t, err)
+		require.True(t, rv.GetFields()["success"].GetBoolValue())
+		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
 	})
 }
 
