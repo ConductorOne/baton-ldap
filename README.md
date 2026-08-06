@@ -71,6 +71,38 @@ Returns `ou_dn` (the created OU's DN) and `success`.
 - The action is idempotent: creating an OU that already exists succeeds.
 - The bind account must have permission to create entries at the target location.
 
+## `update_user_attrs`
+
+Sets or clears arbitrary LDAP attributes on an existing user. This action also backs
+ConductorOne's "push profile" flow for LDAP users.
+
+| Argument | Required | Description |
+|---|---|---|
+| `resource_id` | yes | The distinguished name (DN) of the user to update. |
+| `attrs` | yes | A map of attribute name → value. An empty value clears the attribute. |
+| `attrs_update_mask` | yes | The subset of attribute names in `attrs` to actually write. |
+| `resource_type` | no | The resource type; always `user` for this action. |
+
+Returns `success`, `applied` (the number of attributes modified), and `skipped` (mask
+entries that were not written).
+
+**Notes:**
+- Scope: this action is for **generic** LDAP directories. Active Directory and FreeIPA
+  have their own connectors (`baton-active-directory`, `baton-freeipa`).
+- Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
+  out-of-scope or non-user DNs are rejected as "not found" (fail-closed).
+- Attribute values are set with a `Replace`; an empty value clears the attribute.
+  Attributes are **single-valued** through this action (the `attrs` map holds one value
+  per name); binary attributes are not supported.
+- Re-runs are idempotent: attributes already holding the requested value (or already
+  absent, for a clear) are left untouched and reported via `applied`.
+- The following are **not** modifiable and are rejected or skipped: password attributes
+  (`userPassword` / anything containing `password` — use credential rotation instead),
+  `objectClass` (both rejected), and the user's RDN attribute (skipped — renaming
+  requires a ModifyDN).
+- Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
+  to run, and the bind account must have permission to modify the target entry.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose

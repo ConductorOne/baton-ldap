@@ -373,6 +373,34 @@ func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyReque
 	return nil
 }
 
+// LdapModifyStrict performs a modify WITHOUT the idempotent-error swallowing that
+// LdapModify applies. LdapModify passes isModify=true to getConnection, which masks
+// UnwillingToPerform / NoSuchAttribute / AttributeOrValueExists / EntryAlreadyExists
+// to a nil error — desirable for grant/revoke idempotency, but it hides genuine
+// schema/permission rejections. Callers that must observe the server's real result
+// (e.g. the update_user_attrs action) use this variant and handle any idempotency
+// themselves. Network errors are still retried, and changes are DN-scoped, so a
+// retried modify is safe as long as its changes are idempotent (e.g. Replace).
+func (c *Client) LdapModifyStrict(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("modifying ldap entry (strict)", zap.String("DN", modifyRequest.DN))
+
+	err := c.getConnection(ctx, false, func(client *ldapConn) error {
+		return client.conn.Modify(modifyRequest)
+	})
+	if err != nil {
+		// Debug, not Error: getConnection already logs the raw error, and the
+		// sole caller (the update_user_attrs action) logs a contextual error and
+		// decides severity. Avoids logging an expected, caller-handled rejection
+		// at Error multiple times.
+		l.Debug("baton-ldap: client failed to modify record (strict)", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) LdapDelete(ctx context.Context, deleteRequest *ldap.DelRequest) error {
 	l := ctxzap.Extract(ctx)
 
