@@ -39,11 +39,18 @@ const (
 // userResource) to the real LDAP attribute they represent. A mask name not in
 // this map (and not in profileSyntheticSkip) is treated as a raw LDAP attribute
 // name. Keys are compared case-insensitively.
+//
+// Note: adding "email" here changes the existing global update_user_attrs
+// action's behavior for a mask entry named "email": previously it tried to
+// write a nonexistent raw "email" attribute (a no-op/failure depending on
+// directory schema); now it correctly maps to "mail". Strict improvement, but
+// a behavior change on a shipped path.
 var profileAttrAliases = map[string]string{
 	"first_name":   attrFirstName,       // givenName
 	"last_name":    attrLastName,        // sn
 	"display_name": attrUserDisplayName, // displayName
 	"user_id":      attrUserUID,         // uid
+	"email":        attrUserMail,        // mail
 }
 
 // profileSyntheticSkip are synthetic profile keys with no single LDAP attribute
@@ -190,6 +197,46 @@ func updateUserAttrsActionSchema() *v2.BatonActionSchema {
 	}
 }
 
+// requireOptionalStructArg extracts the struct-typed value at key. It returns
+// (nil, nil) when the key is absent, and an error when the key is present but
+// not a struct (rather than silently discarding the type mismatch and treating
+// it as absent -- the bug in actions.GetStructArg's boolean "ok" being blind to
+// this distinction).
+func requireOptionalStructArg(args *structpb.Struct, key string) (*structpb.Struct, error) {
+	value, present := args.GetFields()[key]
+	if !present {
+		return nil, nil
+	}
+	structValue, ok := value.GetKind().(*structpb.Value_StructValue)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a struct", key)
+	}
+	return structValue.StructValue, nil
+}
+
+// requireOptionalStringSliceArg extracts the string-list value at key. It
+// returns (nil, nil) when the key is absent, and an error when the key is
+// present but not a list of strings (see requireOptionalStructArg).
+func requireOptionalStringSliceArg(args *structpb.Struct, key string) ([]string, error) {
+	value, present := args.GetFields()[key]
+	if !present {
+		return nil, nil
+	}
+	listValue, ok := value.GetKind().(*structpb.Value_ListValue)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a list of strings", key)
+	}
+	result := make([]string, 0, len(listValue.ListValue.Values))
+	for _, v := range listValue.ListValue.Values {
+		strVal, ok := v.GetKind().(*structpb.Value_StringValue)
+		if !ok {
+			return nil, fmt.Errorf("%s entries must be strings", key)
+		}
+		result = append(result, strVal.StringValue)
+	}
+	return result, nil
+}
+
 // GlobalActions registers the connector's global actions. The SDK detects this
 // via type assertion in NewConnector and serves the registered actions.
 func (l *LDAP) GlobalActions(ctx context.Context, registry actions.ActionRegistry) error {
@@ -253,71 +300,132 @@ func (l *LDAP) createOU(ctx context.Context, args *structpb.Struct) (*structpb.S
 // are written; an empty value clears the attribute. See buildUserAttrChanges for
 // the alias/denylist/idempotency rules.
 func (l *LDAP) updateUserAttrs(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
-	log := ctxzap.Extract(ctx)
-
 	resourceID, err := actions.RequireStringArg(args, argResourceID)
 	if err != nil {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
 	}
 
 	// attrs is a StringMap, delivered as a nested struct of string values.
+	attrsStruct, err := requireOptionalStructArg(args, argAttrs)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
+	}
 	attrs := map[string]string{}
-	if attrsStruct, ok := actions.GetStructArg(args, argAttrs); ok && attrsStruct != nil {
+	if attrsStruct != nil {
 		for k, v := range attrsStruct.Fields {
-			if _, ok := v.GetKind().(*structpb.Value_StringValue); !ok {
+			strVal, ok := v.GetKind().(*structpb.Value_StringValue)
+			if !ok {
 				return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: attribute %q value must be a string", k)
 			}
-			attrs[k] = v.GetStringValue()
+			attrs[k] = strVal.StringValue
 		}
 	}
 
-	mask, _ := actions.GetStringSliceArg(args, argAttrsUpdateMask)
+	mask, err := requireOptionalStringSliceArg(args, argAttrsUpdateMask)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
+	}
 
 	// An empty mask is a no-op success (the push pipeline may send no fields).
+	// This check must stay here, ahead of DN canonicalization/scope-check/fetch,
+	// and must NOT move into applyUserAttrUpdate: today a malformed or
+	// out-of-scope resource_id combined with an empty mask returns success
+	// (never inspected), and that is the existing, tested behavior of this
+	// handler. applyUserAttrUpdate deliberately has no such early return -- its
+	// other caller (update_profile) needs the full pipeline to run even for an
+	// empty mask, so a vanished/out-of-scope user still surfaces as NotFound
+	// instead of a false success.
 	if len(mask) == 0 {
 		return updateUserAttrsResult(0, nil), nil, nil
 	}
 
+	// Fail-closed scope check target: only entries within the configured user
+	// search scope may be modified.
+	scopeDN := l.config.UserSearchDN
+	if scopeDN == nil {
+		scopeDN = l.config.BaseDN
+	}
+
+	result, err := applyUserAttrUpdate(ctx, l.client, scopeDN, actionNameUpdateUserAttrs, resourceID, attrs, mask)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return updateUserAttrsResult(result.Applied, result.Skipped), nil, nil
+}
+
+// userAttrUpdate is the result of a successful applyUserAttrUpdate call.
+type userAttrUpdate struct {
+	// DN is the canonical DN of the modified entry, as read back from the
+	// fetched account (not necessarily identical in casing/spacing to the
+	// caller-supplied resourceID).
+	DN string
+	// Applied is the number of attributes actually modified.
+	Applied int
+	// Skipped lists mask entries that were not written; see buildUserAttrChanges.
+	Skipped []string
+}
+
+// applyUserAttrUpdate runs the full canonicalize -> fail-closed scope-check ->
+// fetch -> diff -> modify pipeline shared by updateUserAttrs (the global
+// action) and updateProfile (the resource-scoped action). It always runs this
+// complete pipeline and has no empty-mask/empty-attrs early return of its own
+// -- see the comment on the caller-side early return in updateUserAttrs for
+// why that matters and must not move here.
+//
+// Status codes are deliberately identical regardless of caller: InvalidArgument
+// for a malformed resourceID, NotFound for an out-of-scope or missing user
+// (deliberately indistinguishable, to avoid leaking the existence of entries
+// outside the connector's managed subtree), and a plain wrapped error
+// (surfaced by the SDK as a FAILED action) for a real server modify rejection.
+// actionName only varies message text, never the status code.
+func applyUserAttrUpdate(
+	ctx context.Context,
+	client *ldap.Client,
+	scopeDN *ldap3.DN,
+	actionName string,
+	resourceID string,
+	attrs map[string]string,
+	mask []string,
+) (*userAttrUpdate, error) {
+	log := ctxzap.Extract(ctx)
+
 	targetDN, err := ldap.CanonicalizeDN(resourceID)
 	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: invalid resource_id %q: %v", resourceID, err)
+		return nil, status.Errorf(codes.InvalidArgument, "ldap-connector: %s: invalid resource_id %q: %v", actionName, resourceID, err)
 	}
 
 	// Fail-closed scope check: only entries within the configured user search
 	// scope may be modified. Report out-of-scope as NotFound to avoid leaking
 	// the existence of entries outside the connector's managed subtree.
-	scopeDN := l.config.UserSearchDN
-	if scopeDN == nil {
-		scopeDN = l.config.BaseDN
-	}
 	if err := assertDNInScope(targetDN, scopeDN); err != nil {
-		log.Debug("update_user_attrs: target out of scope", zap.String("dn", targetDN.String()), zap.Error(err))
-		return nil, nil, status.Error(codes.NotFound, "ldap-connector: update_user_attrs: user not found")
+		log.Debug(actionName+": target out of scope", zap.String("dn", targetDN.String()), zap.Error(err))
+		return nil, status.Errorf(codes.NotFound, "ldap-connector: %s: user not found", actionName)
 	}
 
 	// Fetch the entry: confirms it exists and is a user, and lets us pre-filter
 	// no-op changes so re-runs are idempotent without relying on the client's
 	// error masking.
-	acc, err := getAccount(ctx, l.client, targetDN.String())
+	acc, err := getAccount(ctx, client, targetDN.String())
 	if err != nil {
-		log.Debug("update_user_attrs: user lookup failed", zap.String("dn", targetDN.String()), zap.Error(err))
-		return nil, nil, status.Error(codes.NotFound, "ldap-connector: update_user_attrs: user not found")
+		log.Debug(actionName+": user lookup failed", zap.String("dn", targetDN.String()), zap.Error(err))
+		return nil, status.Errorf(codes.NotFound, "ldap-connector: %s: user not found", actionName)
 	}
 
-	changes, skipped, err := buildUserAttrChanges(acc, targetDN, attrs, mask)
+	changes, skipped, err := buildUserAttrChanges(ctx, acc, targetDN, attrs, mask, actionName)
 	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "ldap-connector: %s: %v", actionName, err)
 	}
 
 	if len(changes) == 0 {
-		log.Info("update_user_attrs: nothing to apply", zap.String("dn", acc.DN), zap.Strings("skipped", skipped))
-		return updateUserAttrsResult(0, skipped), nil, nil
+		log.Info(actionName+": nothing to apply", zap.String("dn", acc.DN), zap.Strings("skipped", skipped))
+		return &userAttrUpdate{DN: acc.DN, Applied: 0, Skipped: skipped}, nil
 	}
 
 	// Use the strict modify so genuine schema/permission rejections surface
 	// (the default LdapModify would mask UnwillingToPerform et al. to nil).
 	req := &ldap3.ModifyRequest{DN: acc.DN, Changes: changes}
-	if err := l.client.LdapModifyStrict(ctx, req); err != nil {
+	if err := client.LdapModifyStrict(ctx, req); err != nil {
 		// Log attribute names and value lengths only; values may be PII.
 		fields := []zap.Field{zap.Error(err), zap.String("dn", acc.DN)}
 		for _, ch := range changes {
@@ -331,12 +439,12 @@ func (l *LDAP) updateUserAttrs(ctx context.Context, args *structpb.Struct) (*str
 		// violations) are expected customer-config conditions, not connector bugs,
 		// so they shouldn't trip Error-level alerting. The error is still returned
 		// and surfaced as a FAILED action by the SDK.
-		log.Warn("update_user_attrs: modify failed", fields...)
-		return nil, nil, fmt.Errorf("ldap-connector: update_user_attrs: failed to modify user %q: %w", acc.DN, err)
+		log.Warn(actionName+": modify failed", fields...)
+		return nil, fmt.Errorf("ldap-connector: %s: failed to modify user %q: %w", actionName, acc.DN, err)
 	}
 
-	log.Info("update_user_attrs: success", zap.String("dn", acc.DN), zap.Int("applied", len(changes)), zap.Strings("skipped", skipped))
-	return updateUserAttrsResult(len(changes), skipped), nil, nil
+	log.Info(actionName+": success", zap.String("dn", acc.DN), zap.Int("applied", len(changes)), zap.Strings("skipped", skipped))
+	return &userAttrUpdate{DN: acc.DN, Applied: len(changes), Skipped: skipped}, nil
 }
 
 // updateUserAttrsResult builds the action return struct (success + applied + skipped).
@@ -384,19 +492,46 @@ func resolveUpdateAttrName(maskName string) (string, bool) {
 
 // buildUserAttrChanges turns the update mask into a set of LDAP Replace changes,
 // reading current values from entry so already-satisfied changes are dropped
-// (idempotent re-runs). Rules:
+// (idempotent re-runs). actionName is used only in error messages (so a caller
+// other than update_user_attrs, e.g. update_profile, doesn't tell the customer
+// the wrong action name for a denylisted attribute). Rules:
 //   - synthetic keys (login, path) -> skipped
 //   - password* and objectClass    -> hard error (use credential rotation / not allowed)
 //   - the target's RDN attribute(s) -> skipped (cannot be changed via Modify)
-//   - a mask entry with no value in attrs -> skipped
-//   - duplicate resolved attribute names -> later ones skipped
+//   - a mask entry with no value in attrs -> skipped (attrs is looked up by
+//     exact key match first, falling back to a case-insensitive match)
+//   - the first mask entry that survives synthetic-skip/RDN/password-denylist/
+//     missing-value filtering claims the attribute; later entries resolving to
+//     the same attribute are skipped (the seen[lower] dedupe only fires after
+//     those other gates -- a mask entry skipped by one of those gates does not
+//     block a later entry for the same attribute)
 //   - empty value -> clear (Replace with no values); skipped if already absent
 //   - non-empty value -> Replace; skipped if the attribute already holds exactly it
-func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[string]string, mask []string) ([]ldap3.Change, []string, error) {
+//
+// A multi-valued current attribute is collapsed to the single supplied value
+// when set (not merged/reconciled) -- a known, deliberately deferred bug
+// (logged at Warn here, not fixed). Today's collapse behavior is pinned by a
+// TestBuildUserAttrChanges case so a future fix is a deliberate, reviewed change.
+func buildUserAttrChanges(ctx context.Context, entry *ldap.Entry, targetDN *ldap3.DN, attrs map[string]string, mask []string, actionName string) ([]ldap3.Change, []string, error) {
+	log := ctxzap.Extract(ctx)
 	rdnTypes := rdnAttrTypes(targetDN)
 	seen := map[string]bool{}
 	var changes []ldap3.Change
 	var skipped []string
+
+	// Case-insensitive fallback index over attrs, built once. attrs[maskName] is
+	// always tried first (exact match); this index only matters when a mask
+	// entry's case doesn't exactly match its key in attrs (bug #3). If two attrs
+	// keys fold to the same lowercase, the first one encountered during this
+	// (map-order-random) build wins the fallback slot -- an intentionally
+	// unspecified corner case since the caller controls attrs' keys.
+	lowerAttrs := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		lk := strings.ToLower(k)
+		if _, exists := lowerAttrs[lk]; !exists {
+			lowerAttrs[lk] = v
+		}
+	}
 
 	for _, maskName := range mask {
 		attrName, skip := resolveUpdateAttrName(maskName)
@@ -406,10 +541,10 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 		}
 
 		if strings.Contains(strings.ToLower(attrName), "password") {
-			return nil, nil, fmt.Errorf("attribute %q cannot be modified via update_user_attrs; use credential rotation instead", maskName)
+			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s; use credential rotation instead", maskName, actionName)
 		}
 		if strings.EqualFold(attrName, ldapAttrObjectClass) {
-			return nil, nil, fmt.Errorf("attribute %q cannot be modified via update_user_attrs", maskName)
+			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s", maskName, actionName)
 		}
 
 		if rdnTypes[strings.ToLower(attrName)] {
@@ -420,6 +555,9 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 		}
 
 		value, ok := attrs[maskName]
+		if !ok {
+			value, ok = lowerAttrs[strings.ToLower(maskName)]
+		}
 		if !ok {
 			skipped = append(skipped, maskName)
 			continue
@@ -444,6 +582,10 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 			continue
 		}
 
+		if len(current) > 1 {
+			log.Warn(actionName+": multi-valued attribute will be collapsed to a single value",
+				zap.String("attr", attrName), zap.Int("current_value_count", len(current)))
+		}
 		if len(current) == 1 && current[0] == value {
 			continue // already set to exactly this value
 		}
