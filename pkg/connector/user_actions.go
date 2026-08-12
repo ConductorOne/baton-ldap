@@ -168,7 +168,7 @@ func (u *userResourceType) ResourceActions(ctx context.Context, registry actions
 // empty is reported in skipped rather than silently vanishing (R4). This
 // mirrors buildUserAttrChanges' own "empty value clears" rule for
 // custom_attributes, which is included whenever the key is present, regardless
-// of value (empty clears, consistent with the global update_user_attrs action).
+// of value.
 //
 // Collision rule (R3): a custom_attributes key that case-insensitively matches
 // one of the four named-argument names is dropped before it ever reaches the
@@ -244,11 +244,11 @@ func buildProfileUpdate(args *structpb.Struct) (map[string]string, []string, []s
 	return attrs, mask, skipped, nil
 }
 
-// updateProfile is the update_profile resource-scoped action handler. Unlike
-// updateUserAttrs, it has no empty-mask/empty-attrs early return: it always
-// runs the full applyUserAttrUpdate pipeline, so a vanished or out-of-scope
-// user still surfaces as NotFound even if every field the caller sent was
-// empty or absent.
+// updateProfile is the update_profile resource-scoped action handler. It has
+// no empty-mask/empty-attrs early return: it always runs the full
+// applyUserAttrUpdate pipeline, so a vanished or out-of-scope user still
+// surfaces as NotFound even if every field the caller sent was empty or
+// absent.
 func (u *userResourceType) updateProfile(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 

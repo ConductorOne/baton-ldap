@@ -71,38 +71,6 @@ Returns `ou_dn` (the created OU's DN) and `success`.
 - The action is idempotent: creating an OU that already exists succeeds.
 - The bind account must have permission to create entries at the target location.
 
-## `update_user_attrs`
-
-Sets or clears arbitrary LDAP attributes on an existing user. This action also backs
-ConductorOne's "push profile" flow for LDAP users.
-
-| Argument | Required | Description |
-|---|---|---|
-| `resource_id` | yes | The distinguished name (DN) of the user to update. |
-| `attrs` | yes | A map of attribute name → value. An empty value clears the attribute. |
-| `attrs_update_mask` | yes | The subset of attribute names in `attrs` to actually write. |
-| `resource_type` | no | The resource type; always `user` for this action. |
-
-Returns `success`, `applied` (the number of attributes modified), and `skipped` (mask
-entries that were not written).
-
-**Notes:**
-- Scope: this action is for **generic** LDAP directories. Active Directory and FreeIPA
-  have their own connectors (`baton-active-directory`, `baton-freeipa`).
-- Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
-  out-of-scope or non-user DNs are rejected as "not found" (fail-closed).
-- Attribute values are set with a `Replace`; an empty value clears the attribute.
-  Attributes are **single-valued** through this action (the `attrs` map holds one value
-  per name); binary attributes are not supported.
-- Re-runs are idempotent: attributes already holding the requested value (or already
-  absent, for a clear) are left untouched and reported via `applied`.
-- The following are **not** modifiable and are rejected or skipped: password attributes
-  (`userPassword` / anything containing `password` — use credential rotation instead),
-  `objectClass` (both rejected), and the user's RDN attribute (skipped — renaming
-  requires a ModifyDN).
-- Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
-  to run, and the bind account must have permission to modify the target entry.
-
 ## `update_profile`
 
 Sets core profile fields (first name, last name, display name, email) and/or arbitrary
@@ -123,34 +91,31 @@ re-fetched; absent if the read-back failed, though the write itself still succee
 `custom_attributes` entries that were not written).
 
 **Notes:**
-- Scope: this action is **resource-scoped to `user`**, as opposed to `update_user_attrs`,
-  which is a global (connector-level) action. This distinction matters: resource-scoping
-  is what makes `update_profile` discoverable and usable from ConductorOne's
-  attribute-push-rule feature, since that feature offers actions per resource type rather
-  than the connector's global action list.
+- Scope: this action is **resource-scoped to `user`**. Resource-scoping is what makes
+  `update_profile` discoverable and usable from ConductorOne's attribute-push-rule
+  feature, since that feature offers actions per resource type rather than the
+  connector's global action list.
 - Named-field semantics: `first_name`, `last_name`, `display_name`, and `email` are only
   applied when present **and non-empty** -- they cannot be used to clear an attribute. A
   present-but-empty named field is dropped from the write and reported in `skipped`
   rather than silently vanishing.
 - `custom_attributes` semantics: an entry is written whenever the key is present,
-  including with an empty value (which clears the attribute) -- consistent with
-  `update_user_attrs`'s "empty value clears" rule.
+  including with an empty value, which clears the attribute.
 - Collisions: a `custom_attributes` key that case-insensitively matches one of the four
   named argument names (`first_name`, `last_name`, `display_name`, `email`) is dropped --
   never merged with, or silently overwriting, the named field's slot -- and reported
   once in `skipped`.
-- The same restrictions as `update_user_attrs` apply: password attributes
+- The following are **not** modifiable and are rejected or skipped: password attributes
   (`userPassword` / anything containing `password` -- use credential rotation instead),
-  `objectClass` (both rejected), and the user's RDN attribute (skipped) cannot be
-  modified through this action.
+  `objectClass` (both rejected), and the user's RDN attribute (skipped -- renaming
+  requires a ModifyDN).
 - **Multi-valued attributes:** setting (not clearing) a value on an attribute that
   currently holds more than one value now returns an error instead of silently
   discarding the extra values. Clearing (an empty value) a multi-valued attribute is
   unaffected and still removes all values -- that remains an explicit, intentional
   "remove all values" operation.
 - Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
-  out-of-scope or non-user DNs are rejected as "not found" (fail-closed), same as
-  `update_user_attrs`.
+  out-of-scope or non-user DNs are rejected as "not found" (fail-closed).
 - Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
   to run, and the bind account must have permission to modify the target entry.
 

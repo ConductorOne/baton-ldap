@@ -28,23 +28,13 @@ const (
 	argParentDN         = "parent_dn"
 	argDescription      = "description"
 
-	actionNameUpdateUserAttrs = "update_user_attrs"
-	argResourceID             = "resource_id"
-	argAttrs                  = "attrs"
-	argAttrsUpdateMask        = "attrs_update_mask"
-	ldapAttrObjectClass       = "objectClass"
+	ldapAttrObjectClass = "objectClass"
 )
 
 // profileAttrAliases maps baton-ldap's synthetic user-profile keys (produced by
 // userResource) to the real LDAP attribute they represent. A mask name not in
 // this map (and not in profileSyntheticSkip) is treated as a raw LDAP attribute
 // name. Keys are compared case-insensitively.
-//
-// Note: adding "email" here changes the existing global update_user_attrs
-// action's behavior for a mask entry named "email": previously it tried to
-// write a nonexistent raw "email" attribute (a no-op/failure depending on
-// directory schema); now it correctly maps to "mail". Strict improvement, but
-// a behavior change on a shipped path.
 var profileAttrAliases = map[string]string{
 	"first_name":   attrFirstName,       // givenName
 	"last_name":    attrLastName,        // sn
@@ -142,61 +132,6 @@ func createOUActionSchema() *v2.BatonActionSchema {
 	}
 }
 
-func updateUserAttrsActionSchema() *v2.BatonActionSchema {
-	return &v2.BatonActionSchema{
-		Name:        actionNameUpdateUserAttrs,
-		DisplayName: "Update User Attributes",
-		Description: "Set or clear arbitrary LDAP attributes on an existing user. An empty value clears the attribute. " +
-			"Password, objectClass, and RDN attributes cannot be modified through this action.",
-		ActionType: []v2.ActionType{
-			v2.ActionType_ACTION_TYPE_ACCOUNT,
-			v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE,
-		},
-		Arguments: []*config_sdk.Field{
-			{
-				Name:        argResourceID,
-				DisplayName: "Resource ID",
-				Description: "The distinguished name (DN) of the user to update.",
-				IsRequired:  true,
-				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
-			},
-			{
-				Name:        argAttrs,
-				DisplayName: "Attributes",
-				Description: "Map of LDAP attribute name to value. An empty value clears the attribute.",
-				IsRequired:  true,
-				Field:       &config_sdk.Field_StringMapField{StringMapField: &config_sdk.StringMapField{}},
-			},
-			{
-				Name:        argAttrsUpdateMask,
-				DisplayName: "Attributes Update Mask",
-				Description: "The subset of attribute names from \"attrs\" to actually write.",
-				IsRequired:  true,
-				Field:       &config_sdk.Field_StringSliceField{StringSliceField: &config_sdk.StringSliceField{}},
-			},
-		},
-		ReturnTypes: []*config_sdk.Field{
-			{
-				Name:        "success",
-				DisplayName: "Success",
-				Field:       &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
-			},
-			{
-				Name:        "applied",
-				DisplayName: "Applied",
-				Description: "The number of attributes modified.",
-				Field:       &config_sdk.Field_IntField{IntField: &config_sdk.IntField{}},
-			},
-			{
-				Name:        "skipped",
-				DisplayName: "Skipped",
-				Description: "Mask entries that were not written (no value supplied, synthetic key, or RDN attribute).",
-				Field:       &config_sdk.Field_StringSliceField{StringSliceField: &config_sdk.StringSliceField{}},
-			},
-		},
-	}
-}
-
 // requireOptionalStructArg extracts the struct-typed value at key. It returns
 // (nil, nil) when the key is absent, and an error when the key is present but
 // not a struct (rather than silently discarding the type mismatch and treating
@@ -214,37 +149,11 @@ func requireOptionalStructArg(args *structpb.Struct, key string) (*structpb.Stru
 	return structValue.StructValue, nil
 }
 
-// requireOptionalStringSliceArg extracts the string-list value at key. It
-// returns (nil, nil) when the key is absent, and an error when the key is
-// present but not a list of strings (see requireOptionalStructArg).
-func requireOptionalStringSliceArg(args *structpb.Struct, key string) ([]string, error) {
-	value, present := args.GetFields()[key]
-	if !present {
-		return nil, nil
-	}
-	listValue, ok := value.GetKind().(*structpb.Value_ListValue)
-	if !ok {
-		return nil, fmt.Errorf("%s must be a list of strings", key)
-	}
-	result := make([]string, 0, len(listValue.ListValue.Values))
-	for _, v := range listValue.ListValue.Values {
-		strVal, ok := v.GetKind().(*structpb.Value_StringValue)
-		if !ok {
-			return nil, fmt.Errorf("%s entries must be strings", key)
-		}
-		result = append(result, strVal.StringValue)
-	}
-	return result, nil
-}
-
 // GlobalActions registers the connector's global actions. The SDK detects this
 // via type assertion in NewConnector and serves the registered actions.
 func (l *LDAP) GlobalActions(ctx context.Context, registry actions.ActionRegistry) error {
 	if err := registry.Register(ctx, createOUActionSchema(), l.createOU); err != nil {
 		return fmt.Errorf("ldap-connector: failed to register create_ou action: %w", err)
-	}
-	if err := registry.Register(ctx, updateUserAttrsActionSchema(), l.updateUserAttrs); err != nil {
-		return fmt.Errorf("ldap-connector: failed to register update_user_attrs action: %w", err)
 	}
 	return nil
 }
@@ -294,66 +203,6 @@ func (l *LDAP) createOU(ctx context.Context, args *structpb.Struct) (*structpb.S
 	return actions.NewReturnValues(true, actions.NewStringReturnField("ou_dn", ouDN)), nil, nil
 }
 
-// updateUserAttrs sets or clears arbitrary LDAP attributes on an existing user.
-// It backs the C1 profile-push pipeline (ACTION_TYPE_ACCOUNT_UPDATE_PROFILE) and
-// is also invocable directly. Only the attribute names listed in the update mask
-// are written; an empty value clears the attribute. See buildUserAttrChanges for
-// the alias/denylist/idempotency rules.
-func (l *LDAP) updateUserAttrs(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
-	resourceID, err := actions.RequireStringArg(args, argResourceID)
-	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
-	}
-
-	// attrs is a StringMap, delivered as a nested struct of string values.
-	attrsStruct, err := requireOptionalStructArg(args, argAttrs)
-	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
-	}
-	attrs := map[string]string{}
-	if attrsStruct != nil {
-		for k, v := range attrsStruct.Fields {
-			strVal, ok := v.GetKind().(*structpb.Value_StringValue)
-			if !ok {
-				return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: attribute %q value must be a string", k)
-			}
-			attrs[k] = strVal.StringValue
-		}
-	}
-
-	mask, err := requireOptionalStringSliceArg(args, argAttrsUpdateMask)
-	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: update_user_attrs: %v", err)
-	}
-
-	// An empty mask is a no-op success (the push pipeline may send no fields).
-	// This check must stay here, ahead of DN canonicalization/scope-check/fetch,
-	// and must NOT move into applyUserAttrUpdate: today a malformed or
-	// out-of-scope resource_id combined with an empty mask returns success
-	// (never inspected), and that is the existing, tested behavior of this
-	// handler. applyUserAttrUpdate deliberately has no such early return -- its
-	// other caller (update_profile) needs the full pipeline to run even for an
-	// empty mask, so a vanished/out-of-scope user still surfaces as NotFound
-	// instead of a false success.
-	if len(mask) == 0 {
-		return updateUserAttrsResult(0, nil), nil, nil
-	}
-
-	// Fail-closed scope check target: only entries within the configured user
-	// search scope may be modified.
-	scopeDN := l.config.UserSearchDN
-	if scopeDN == nil {
-		scopeDN = l.config.BaseDN
-	}
-
-	result, err := applyUserAttrUpdate(ctx, l.client, scopeDN, actionNameUpdateUserAttrs, resourceID, attrs, mask)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return updateUserAttrsResult(result.Applied, result.Skipped), nil, nil
-}
-
 // userAttrUpdate is the result of a successful applyUserAttrUpdate call.
 type userAttrUpdate struct {
 	// DN is the canonical DN of the modified entry, as read back from the
@@ -367,11 +216,11 @@ type userAttrUpdate struct {
 }
 
 // applyUserAttrUpdate runs the full canonicalize -> fail-closed scope-check ->
-// fetch -> diff -> modify pipeline shared by updateUserAttrs (the global
-// action) and updateProfile (the resource-scoped action). It always runs this
-// complete pipeline and has no empty-mask/empty-attrs early return of its own
-// -- see the comment on the caller-side early return in updateUserAttrs for
-// why that matters and must not move here.
+// fetch -> diff -> modify pipeline behind updateProfile (the resource-scoped
+// action). It always runs this complete pipeline with no empty-mask/empty-attrs
+// early return of its own: updateProfile needs the full pipeline to run even
+// for an empty mask, so a vanished/out-of-scope user still surfaces as
+// NotFound instead of a false success.
 //
 // Status codes are deliberately identical regardless of caller: InvalidArgument
 // for a malformed resourceID, NotFound for an out-of-scope or missing user
@@ -447,14 +296,6 @@ func applyUserAttrUpdate(
 	return &userAttrUpdate{DN: acc.DN, Applied: len(changes), Skipped: skipped}, nil
 }
 
-// updateUserAttrsResult builds the action return struct (success + applied + skipped).
-func updateUserAttrsResult(applied int, skipped []string) *structpb.Struct {
-	return actions.NewReturnValues(true,
-		actions.NewNumberReturnField("applied", float64(applied)),
-		actions.NewStringListReturnField("skipped", skipped),
-	)
-}
-
 // assertDNInScope returns nil when target is equal to, or a descendant of, scope
 // (case-insensitive). scope is canonicalized defensively since the stored config
 // DN is not guaranteed canonical. Mirrors buildOUDN's fail-closed check.
@@ -492,9 +333,9 @@ func resolveUpdateAttrName(maskName string) (string, bool) {
 
 // buildUserAttrChanges turns the update mask into a set of LDAP Replace changes,
 // reading current values from entry so already-satisfied changes are dropped
-// (idempotent re-runs). actionName is used only in error messages (so a caller
-// other than update_user_attrs, e.g. update_profile, doesn't tell the customer
-// the wrong action name for a denylisted attribute). Rules:
+// (idempotent re-runs). actionName is used only in error messages, so the
+// caller (e.g. update_profile) is named accurately in a denylisted-attribute
+// error. Rules:
 //   - synthetic keys (login, path) -> skipped
 //   - password* and objectClass    -> hard error (use credential rotation / not allowed)
 //   - the target's RDN attribute(s) -> skipped (cannot be changed via Modify)

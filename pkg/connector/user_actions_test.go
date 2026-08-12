@@ -435,9 +435,9 @@ func TestUpdateProfile(t *testing.T) {
 	})
 
 	t.Run("nonexistent DN with every field empty is still NotFound, not a false success", func(t *testing.T) {
-		// Proves updateProfile has no empty-mask early return: unlike
-		// updateUserAttrs, an all-empty request must still surface a vanished
-		// user as NotFound rather than a no-op success.
+		// Proves updateProfile has no empty-mask early return: an all-empty
+		// request must still surface a vanished user as NotFound rather than a
+		// no-op success.
 		_, _, err := ub.updateProfile(ctx, mkUpdateProfileArgs(t, "cn=ghost,ou=users,dc=example,dc=org", "user", map[string]interface{}{
 			"first_name": "",
 		}))
