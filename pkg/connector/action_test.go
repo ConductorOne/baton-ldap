@@ -412,16 +412,45 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		require.Equal(t, []string{"exact"}, changes[0].Modification.Vals)
 	})
 
-	t.Run("multi-valued attribute is pinned to the single supplied value (documented, not fixed)", func(t *testing.T) {
-		// Bug #2: this test pins today's collapse-to-one-value behavior so a
-		// future fix is a deliberate, reviewed change rather than an accidental
-		// side effect of some other refactor.
+	t.Run("setting a non-empty value on a multi-valued attribute is a hard error", func(t *testing.T) {
+		// Bug #2 fix: buildUserAttrChanges previously collapsed a multi-valued
+		// attribute down to the single supplied value, silently discarding every
+		// other existing value with success:true and no signal to the caller.
+		// That pinning test documented the bug deliberately so a future fix
+		// would be a reviewed change, not an accidental side effect -- this is
+		// that fix. Setting a specific non-empty value must now abort the whole
+		// batch instead of collapsing.
 		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
 			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, actionNameUpdateUserAttrs)
+		require.Error(t, err)
+		require.Nil(t, changes)
+		require.Nil(t, skipped)
+		require.Contains(t, err.Error(), "otherMailbox")
+		require.Contains(t, err.Error(), "2")
+		require.Contains(t, err.Error(), actionNameUpdateUserAttrs)
+	})
+
+	t.Run("multi-valued attribute error message names the calling action, not a hardcoded one", func(t *testing.T) {
+		_, _, err := buildUserAttrChanges(ctx, entry, dn,
+			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, "update_profile")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "update_profile")
+		require.NotContains(t, err.Error(), actionNameUpdateUserAttrs)
+	})
+
+	t.Run("clearing a multi-valued attribute is not data loss and still succeeds", func(t *testing.T) {
+		// The nuance: an empty value is an explicit, intentional "remove all
+		// values" operation (LDAP Replace with no values), regardless of how
+		// many values the attribute currently holds. Only setting a specific
+		// non-empty value on a multi-valued attribute is refused.
+		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+			map[string]string{"otherMailbox": ""}, []string{"otherMailbox"}, actionNameUpdateUserAttrs)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
 		require.Len(t, changes, 1)
-		require.Equal(t, []string{"new@example.org"}, changes[0].Modification.Vals)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Equal(t, "otherMailbox", changes[0].Modification.Type)
+		require.Empty(t, changes[0].Modification.Vals)
 	})
 }
 

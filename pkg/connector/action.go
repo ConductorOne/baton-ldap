@@ -506,14 +506,15 @@ func resolveUpdateAttrName(maskName string) (string, bool) {
 //     those other gates -- a mask entry skipped by one of those gates does not
 //     block a later entry for the same attribute)
 //   - empty value -> clear (Replace with no values); skipped if already absent
-//   - non-empty value -> Replace; skipped if the attribute already holds exactly it
-//
-// A multi-valued current attribute is collapsed to the single supplied value
-// when set (not merged/reconciled) -- a known, deliberately deferred bug
-// (logged at Warn here, not fixed). Today's collapse behavior is pinned by a
-// TestBuildUserAttrChanges case so a future fix is a deliberate, reviewed change.
+//   - non-empty value on a single-valued (or absent) attribute -> Replace;
+//     skipped if the attribute already holds exactly it
+//   - non-empty value on an attribute that currently holds MORE THAN ONE
+//     value -> hard error; replacing would silently discard every other
+//     existing value with no visible signal to the caller. Clearing (empty
+//     value) a multi-valued attribute is unaffected and still succeeds --
+//     that is an explicit, intentional "remove all values" operation, not
+//     data loss.
 func buildUserAttrChanges(ctx context.Context, entry *ldap.Entry, targetDN *ldap3.DN, attrs map[string]string, mask []string, actionName string) ([]ldap3.Change, []string, error) {
-	log := ctxzap.Extract(ctx)
 	rdnTypes := rdnAttrTypes(targetDN)
 	seen := map[string]bool{}
 	var changes []ldap3.Change
@@ -583,8 +584,13 @@ func buildUserAttrChanges(ctx context.Context, entry *ldap.Entry, targetDN *ldap
 		}
 
 		if len(current) > 1 {
-			log.Warn(actionName+": multi-valued attribute will be collapsed to a single value",
-				zap.String("attr", attrName), zap.Int("current_value_count", len(current)))
+			// Replacing a multi-valued attribute with a single value would
+			// silently discard every other existing value with no visible
+			// signal to the caller. Abort the whole batch instead of
+			// collapsing, matching the password/objectClass denylist checks
+			// above.
+			return nil, nil, fmt.Errorf("attribute %q has %d existing values; refusing to replace them with a single value via %s (clear the attribute first if this is intentional)",
+				maskName, len(current), actionName)
 		}
 		if len(current) == 1 && current[0] == value {
 			continue // already set to exactly this value
