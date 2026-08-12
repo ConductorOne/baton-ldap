@@ -103,6 +103,57 @@ entries that were not written).
 - Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
   to run, and the bind account must have permission to modify the target entry.
 
+## `update_profile`
+
+Sets core profile fields (first name, last name, display name, email) and/or arbitrary
+custom LDAP attributes on an existing user.
+
+| Argument | Required | Description |
+|---|---|---|
+| `user_id` | yes | Resource ID reference to the user to update. |
+| `first_name` | no | The user's first (given) name, mapped to `givenName`. Ignored if empty. |
+| `last_name` | no | The user's last (surname) name, mapped to `sn`. Ignored if empty. |
+| `display_name` | no | The user's display name, mapped to `displayName`. Ignored if empty. |
+| `email` | no | The user's email address, mapped to `mail`. Ignored if empty. |
+| `custom_attributes` | no | Map of arbitrary raw LDAP attribute name → value, for attributes beyond the named fields above. An empty value clears the attribute. |
+
+Returns `success`, `updated_user` (the user resource after the update, best-effort
+re-fetched; absent if the read-back failed, though the write itself still succeeded),
+`applied` (the number of attributes modified), and `skipped` (named fields or
+`custom_attributes` entries that were not written).
+
+**Notes:**
+- Scope: this action is **resource-scoped to `user`**, as opposed to `update_user_attrs`,
+  which is a global (connector-level) action. This distinction matters: resource-scoping
+  is what makes `update_profile` discoverable and usable from ConductorOne's
+  attribute-push-rule feature, since that feature offers actions per resource type rather
+  than the connector's global action list.
+- Named-field semantics: `first_name`, `last_name`, `display_name`, and `email` are only
+  applied when present **and non-empty** -- they cannot be used to clear an attribute. A
+  present-but-empty named field is dropped from the write and reported in `skipped`
+  rather than silently vanishing.
+- `custom_attributes` semantics: an entry is written whenever the key is present,
+  including with an empty value (which clears the attribute) -- consistent with
+  `update_user_attrs`'s "empty value clears" rule.
+- Collisions: a `custom_attributes` key that case-insensitively matches one of the four
+  named argument names (`first_name`, `last_name`, `display_name`, `email`) is dropped --
+  never merged with, or silently overwriting, the named field's slot -- and reported
+  once in `skipped`.
+- The same restrictions as `update_user_attrs` apply: password attributes
+  (`userPassword` / anything containing `password` -- use credential rotation instead),
+  `objectClass` (both rejected), and the user's RDN attribute (skipped) cannot be
+  modified through this action.
+- **Multi-valued attributes:** setting (not clearing) a value on an attribute that
+  currently holds more than one value now returns an error instead of silently
+  discarding the extra values. Clearing (an empty value) a multi-valued attribute is
+  unaffected and still removes all values -- that remains an explicit, intentional
+  "remove all values" operation.
+- Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
+  out-of-scope or non-user DNs are rejected as "not found" (fail-closed), same as
+  `update_user_attrs`.
+- Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
+  to run, and the bind account must have permission to modify the target entry.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose
