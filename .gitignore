@@ -23,4 +23,3 @@ docker-compose.yml
 # Superpowers planning docs and agent scratch (local only, not part of the connector)
 docs/superpowers/
 .superpowers/
-.task-worktrees/
