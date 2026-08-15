@@ -364,12 +364,21 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	t.Run("denylist error message names the calling action, not a hardcoded one", func(t *testing.T) {
 		// R1: buildUserAttrChanges must not hardcode any specific action name in
 		// its denylist error messages -- a caller like update_profile passes its
-		// own actionName so the customer sees the right action name.
+		// own actionName so the customer sees the right action name. Proven by
+		// varying actionName across two calls and checking the error tracks
+		// whichever one was actually passed, not by checking for the mere
+		// absence of an unrelated, never-supplied string.
 		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, "update_profile")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "update_profile")
 		require.NotContains(t, err.Error(), testActionName)
+
+		_, _, err = buildUserAttrChanges(entry, dn,
+			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, testActionName)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), testActionName)
+		require.NotContains(t, err.Error(), "update_profile")
 	})
 
 	t.Run("duplicate resolved attr deduped", func(t *testing.T) {
@@ -433,11 +442,20 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("multi-valued attribute error message names the calling action, not a hardcoded one", func(t *testing.T) {
+		// Proven by varying actionName across two calls and checking the error
+		// tracks whichever one was actually passed, not by checking for the
+		// mere absence of an unrelated, never-supplied string.
 		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, "update_profile")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "update_profile")
 		require.NotContains(t, err.Error(), testActionName)
+
+		_, _, err = buildUserAttrChanges(entry, dn,
+			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, testActionName)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), testActionName)
+		require.NotContains(t, err.Error(), "update_profile")
 	})
 
 	t.Run("clearing a multi-valued attribute is not data loss and still succeeds", func(t *testing.T) {
