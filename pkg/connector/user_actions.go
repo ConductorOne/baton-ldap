@@ -60,7 +60,6 @@ func updateProfileActionSchema() *v2.BatonActionSchema {
 			"key that collides with a named field above is dropped and reported in skipped, never merged with it. Password, " +
 			"objectClass, and RDN attributes cannot be modified through this action.",
 		ActionType: []v2.ActionType{
-			v2.ActionType_ACTION_TYPE_ACCOUNT,
 			v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE,
 		},
 		Arguments: []*config_sdk.Field{

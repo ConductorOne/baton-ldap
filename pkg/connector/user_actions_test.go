@@ -222,8 +222,7 @@ func TestUpdateProfileActionSchema(t *testing.T) {
 	schema := updateProfileActionSchema()
 
 	require.Equal(t, actionNameUpdateProfile, schema.GetName())
-	require.Contains(t, schema.GetActionType(), v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE)
-	require.Contains(t, schema.GetActionType(), v2.ActionType_ACTION_TYPE_ACCOUNT)
+	require.Equal(t, []v2.ActionType{v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE}, schema.GetActionType())
 	require.Empty(t, schema.GetResourceTypeId(), "ResourceTypeId must be unset in the literal -- RegisterResourceAction stamps it")
 
 	var userIDArg, customAttrsArg *config_sdk.Field
