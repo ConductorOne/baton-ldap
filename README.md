@@ -99,6 +99,13 @@ re-fetched; absent if the read-back failed, though the write itself still succee
   applied when present **and non-empty** -- they cannot be used to clear an attribute. A
   present-but-empty named field is dropped from the write and reported in `skipped`
   rather than silently vanishing.
+- `inetOrgPerson` requirement: of the four named fields, only `last_name` (`sn`) is
+  universal -- it's a MUST attribute of the base `person` object class. `first_name`
+  (`givenName`), `display_name` (`displayName`), and `email` (`mail`) are only defined by
+  RFC 2798's `inetOrgPerson` object class; writing one of them to an entry that doesn't
+  carry `inetOrgPerson` fails loudly with LDAP result code 65 ("Object Class Violation").
+  This is safe -- the failure is atomic, with no partial write and no data corruption --
+  but it means those three fields only work against `inetOrgPerson` entries.
 - `custom_attributes` semantics: an entry is written whenever the key is present,
   including with an empty value, which clears the attribute.
 - Collisions: a `custom_attributes` key that case-insensitively matches one of the four
