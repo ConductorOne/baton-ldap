@@ -261,7 +261,7 @@ func applyUserAttrUpdate(
 		return nil, status.Errorf(codes.NotFound, "ldap-connector: %s: user not found", actionName)
 	}
 
-	changes, skipped, err := buildUserAttrChanges(ctx, acc, targetDN, attrs, mask, actionName)
+	changes, skipped, err := buildUserAttrChanges(acc, targetDN, attrs, mask, actionName)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "ldap-connector: %s: %v", actionName, err)
 	}
@@ -355,7 +355,7 @@ func resolveUpdateAttrName(maskName string) (string, bool) {
 //     value) a multi-valued attribute is unaffected and still succeeds --
 //     that is an explicit, intentional "remove all values" operation, not
 //     data loss.
-func buildUserAttrChanges(ctx context.Context, entry *ldap.Entry, targetDN *ldap3.DN, attrs map[string]string, mask []string, actionName string) ([]ldap3.Change, []string, error) {
+func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[string]string, mask []string, actionName string) ([]ldap3.Change, []string, error) {
 	rdnTypes := rdnAttrTypes(targetDN)
 	seen := map[string]bool{}
 	var changes []ldap3.Change

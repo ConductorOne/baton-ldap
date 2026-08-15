@@ -264,7 +264,6 @@ func TestResolveUpdateAttrName(t *testing.T) {
 const testActionName = "test_action"
 
 func TestBuildUserAttrChanges(t *testing.T) {
-	ctx := context.Background()
 	dn := mustDN(t, "cn=user01,ou=users,dc=example,dc=org")
 	entry := entryWith("cn=user01,ou=users,dc=example,dc=org", map[string][]string{
 		"cn":           {"user01"},
@@ -275,7 +274,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("set new value", func(t *testing.T) {
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"telephoneNumber": "555-1234"}, []string{"telephoneNumber"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
@@ -286,7 +285,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("clear existing attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"description": ""}, []string{"description"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
@@ -295,21 +294,21 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("no-op when value already set", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"title": "Engineer"}, []string{"title"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, changes)
 	})
 
 	t.Run("no-op when clearing an absent attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"telephoneNumber": ""}, []string{"telephoneNumber"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, changes)
 	})
 
 	t.Run("alias resolves to real attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"first_name": "Jane"}, []string{"first_name"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
@@ -317,7 +316,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("email alias resolves to mail attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"email": "new@example.org"}, []string{"email"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
@@ -326,7 +325,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("mask entry without value is skipped", func(t *testing.T) {
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"title": "Manager"}, []string{"title", "mail"}, testActionName)
 		require.NoError(t, err)
 		require.Equal(t, []string{"mail"}, skipped)
@@ -335,7 +334,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("synthetic keys skipped", func(t *testing.T) {
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"login": "x", "path": "y"}, []string{"login", "path"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, changes)
@@ -343,7 +342,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("RDN attribute skipped", func(t *testing.T) {
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"cn": "renamed"}, []string{"cn"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, changes)
@@ -351,13 +350,13 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("password attribute rejected", func(t *testing.T) {
-		_, _, err := buildUserAttrChanges(ctx, entry, dn,
+		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, testActionName)
 		require.Error(t, err)
 	})
 
 	t.Run("objectClass rejected", func(t *testing.T) {
-		_, _, err := buildUserAttrChanges(ctx, entry, dn,
+		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"objectClass": "person"}, []string{"objectClass"}, testActionName)
 		require.Error(t, err)
 	})
@@ -366,7 +365,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		// R1: buildUserAttrChanges must not hardcode any specific action name in
 		// its denylist error messages -- a caller like update_profile passes its
 		// own actionName so the customer sees the right action name.
-		_, _, err := buildUserAttrChanges(ctx, entry, dn,
+		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, "update_profile")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "update_profile")
@@ -374,7 +373,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("duplicate resolved attr deduped", func(t *testing.T) {
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"user_id": "u1", "uid": "u2"}, []string{"user_id", "uid"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
@@ -386,7 +385,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		// R5 precedence: "seen" is only marked once an entry survives the earlier
 		// gates, so a mask entry skipped for lack of a value must not shadow a
 		// later entry that resolves to the same attribute and does have one.
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"uid": "newuid"}, []string{"user_id", "uid"}, testActionName)
 		require.NoError(t, err)
 		require.Equal(t, []string{"user_id"}, skipped)
@@ -399,7 +398,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		// Bug #3: attrs is keyed by "TelephoneNumber" but the mask entry (and the
 		// resolved LDAP attribute name) is "telephoneNumber" -- an exact map
 		// lookup would miss this; the case-insensitive fallback must catch it.
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"TelephoneNumber": "555-2000"}, []string{"telephoneNumber"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
@@ -408,7 +407,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("exact-case attrs key wins over the case-insensitive fallback", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"description": "exact", "Description": "fallback"}, []string{"description"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
@@ -423,7 +422,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		// would be a reviewed change, not an accidental side effect -- this is
 		// that fix. Setting a specific non-empty value must now abort the whole
 		// batch instead of collapsing.
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, testActionName)
 		require.Error(t, err)
 		require.Nil(t, changes)
@@ -434,7 +433,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 	})
 
 	t.Run("multi-valued attribute error message names the calling action, not a hardcoded one", func(t *testing.T) {
-		_, _, err := buildUserAttrChanges(ctx, entry, dn,
+		_, _, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, "update_profile")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "update_profile")
@@ -446,7 +445,7 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		// values" operation (LDAP Replace with no values), regardless of how
 		// many values the attribute currently holds. Only setting a specific
 		// non-empty value on a multi-valued attribute is refused.
-		changes, skipped, err := buildUserAttrChanges(ctx, entry, dn,
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"otherMailbox": ""}, []string{"otherMailbox"}, testActionName)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
