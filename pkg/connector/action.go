@@ -226,7 +226,8 @@ type userAttrUpdate struct {
 // Status codes are deliberately identical regardless of caller: InvalidArgument
 // for a malformed resourceID, NotFound for an out-of-scope or missing user
 // (deliberately indistinguishable, to avoid leaking the existence of entries
-// outside the connector's managed subtree), and — for a real server modify
+// outside the connector's managed subtree), the code lookupErrToGRPC derives for
+// a lookup that failed for any other reason, and — for a real server modify
 // rejection — the code ldapResultCodeToGRPC derives from the server's LDAP
 // result code. actionName only varies message text, never the status code.
 func applyUserAttrUpdate(
@@ -258,7 +259,17 @@ func applyUserAttrUpdate(
 	// error masking.
 	acc, err := getAccount(ctx, client, targetDN.String())
 	if err != nil {
-		log.Debug(actionName+": user lookup failed", zap.String("dn", targetDN.String()), zap.Error(err))
+		if code := lookupErrToGRPC(err); code != codes.NotFound {
+			// The lookup failed for a reason other than "the entry isn't there"
+			// (bad bind, dead connection, duplicate entries). Reporting those as
+			// NotFound would tell the caller to fix their user_id when the real
+			// problem is the directory or the connector's credentials.
+			log.Warn(actionName+": user lookup failed", zap.String("dn", targetDN.String()), zap.Error(err))
+			return nil, status.Errorf(code, "ldap-connector: %s: failed to look up user %q: %v", actionName, targetDN.String(), err)
+		}
+		// Genuinely absent: report exactly as the out-of-scope case above, so the
+		// two stay indistinguishable to the caller.
+		log.Debug(actionName+": user not found", zap.String("dn", targetDN.String()), zap.Error(err))
 		return nil, status.Errorf(codes.NotFound, "ldap-connector: %s: user not found", actionName)
 	}
 
@@ -295,6 +306,58 @@ func applyUserAttrUpdate(
 
 	log.Info(actionName+": success", zap.String("dn", acc.DN), zap.Int("applied", len(changes)), zap.Strings("skipped", skipped))
 	return &userAttrUpdate{DN: acc.DN, Applied: len(changes), Skipped: skipped}, nil
+}
+
+// lookupErrToGRPC classifies an error from getAccount (a base-scoped, single-entry
+// read) into the gRPC code that describes what actually went wrong. Only a
+// confirmed zero-result read is NotFound; collapsing every lookup failure to
+// NotFound — as this pipeline used to — hides bind failures, dead connections
+// and duplicate entries behind "user not found", which points the operator at
+// the wrong fix and makes a transient outage look like a deleted user.
+//
+// The layers below signal each case distinctly:
+//   - zero results: pkg/ldap's fetch helpers return a codes.NotFound status
+//     error, and a server-side noSuchObject (result code 32) is joined with the
+//     same status error in _ldapSearch. status.Code unwraps both.
+//   - more than one entry for one DN: ldap.ErrMultipleEntries, found through the
+//     connector's fmt.Errorf wrapping by errors.Is.
+//   - everything else: an *ldap3.Error carrying a protocol result code, or a
+//     bare transport error.
+func lookupErrToGRPC(err error) codes.Code {
+	switch {
+	case err == nil:
+		return codes.OK
+
+	case status.Code(err) == codes.NotFound:
+		return codes.NotFound
+
+	// A base-scoped read of a single DN cannot legitimately match more than one
+	// entry, so this is a broken invariant rather than a missing user or a bad
+	// request. Internal (not FailedPrecondition) because there is no caller-side
+	// precondition to satisfy and no retry that helps: a human has to repair the
+	// directory. Deliberately NOT NotFound — the user does exist, twice.
+	case errors.Is(err, ldap.ErrMultipleEntries):
+		return codes.Internal
+
+	// Context errors arrive here unwrapped from the connection pool; they are not
+	// LDAP failures and must not be reported as one.
+	case errors.Is(err, context.Canceled):
+		return codes.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return codes.DeadlineExceeded
+
+	// Transport failure, including the shapes go-ldap reports as a plain error
+	// rather than an *ldap3.Error. The client already retried in-process, so
+	// reaching here means its retries were exhausted.
+	case ldap.IsNetworkError(err):
+		return codes.Unavailable
+	}
+
+	// Anything left is a protocol rejection (invalid credentials on rebind,
+	// insufficient access on the read, an admin limit). Reuse the modify path's
+	// mapping rather than growing a second one; it defaults to Unknown, which is
+	// what an unclassified connector error already produces today.
+	return ldapResultCodeToGRPC(err)
 }
 
 // ldapResultCodeToGRPC maps the LDAP protocol result code carried by err (RFC

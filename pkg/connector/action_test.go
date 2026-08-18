@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -493,6 +494,83 @@ func (r *testRegistry) Register(_ context.Context, schema *v2.BatonActionSchema,
 func (r *testRegistry) RegisterAction(_ context.Context, _ string, schema *v2.BatonActionSchema, _ actions.ActionHandler) error {
 	r.schemas[schema.GetName()] = schema
 	return nil
+}
+
+// TestLookupErrToGRPC pins the discrimination applyUserAttrUpdate depends on:
+// only a confirmed zero-result read may become NotFound. The error shapes below
+// are the ones pkg/ldap actually produces (see LdapGetWithStringDN and
+// _ldapSearch), each wrapped the way getAccount wraps them.
+func TestLookupErrToGRPC(t *testing.T) {
+	// getAccount's wrapper. Every error reaching lookupErrToGRPC has been through it.
+	wrap := func(err error) error {
+		return fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+	notFoundStatus := status.Errorf(codes.NotFound, "baton-ldap: no such object")
+
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"nil", nil, codes.OK},
+
+		// Genuinely absent. Two shapes: the client's own zero-results synthesis,
+		// and the server answering noSuchObject (joined with the same status).
+		{"zero results", wrap(notFoundStatus), codes.NotFound},
+		{"bare zero results", notFoundStatus, codes.NotFound},
+		{
+			"server no such object",
+			wrap(errors.Join(notFoundStatus, ldap3.NewError(ldap3.LDAPResultNoSuchObject, errors.New("gone")))),
+			codes.NotFound,
+		},
+
+		// Directory data-integrity problem: the user exists twice. Must not be
+		// NotFound, and must not look retryable.
+		{
+			"multiple entries",
+			wrap(fmt.Errorf("%w: %s", ldap.ErrMultipleEntries, "uid=dupe,ou=users,dc=example,dc=com")),
+			codes.Internal,
+		},
+
+		// Transport failures. The connector already exhausted its retries, but the
+		// condition is still transient, not a missing user.
+		{"network result code", wrap(ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset"))), codes.Unavailable},
+		{"truncated response", wrap(errors.New("unable to read LDAP response packet: EOF")), codes.Unavailable},
+
+		// Bind/permission failures against the directory, not a caller mistake.
+		{"invalid credentials", wrap(ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind"))), codes.Unauthenticated},
+		{"insufficient access", wrap(ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied"))), codes.PermissionDenied},
+		{"admin limit", wrap(ldap3.NewError(ldap3.LDAPResultAdminLimitExceeded, errors.New("limit"))), codes.ResourceExhausted},
+		{"unwilling to perform", wrap(ldap3.NewError(ldap3.LDAPResultUnwillingToPerform, errors.New("policy"))), codes.FailedPrecondition},
+
+		// Context errors come from the connection pool, not from LDAP.
+		{"canceled", wrap(context.Canceled), codes.Canceled},
+		{"deadline exceeded", wrap(context.DeadlineExceeded), codes.DeadlineExceeded},
+
+		// Unclassifiable errors keep the package's pre-existing Unknown, rather
+		// than being guessed into a retryable or terminal bucket.
+		{"unmapped ldap code", wrap(ldap3.NewError(ldap3.LDAPResultLoopDetect, errors.New("loop"))), codes.Unknown},
+		{"non-ldap error", wrap(errors.New("boom")), codes.Unknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, lookupErrToGRPC(tc.err))
+		})
+	}
+
+	// The regression this function exists to prevent: every non-absent failure
+	// used to be reported as NotFound.
+	t.Run("only absence is NotFound", func(t *testing.T) {
+		for _, err := range []error{
+			wrap(fmt.Errorf("%w: %s", ldap.ErrMultipleEntries, "uid=dupe,dc=example,dc=com")),
+			wrap(ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset"))),
+			wrap(ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind"))),
+			wrap(ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied"))),
+			wrap(errors.New("boom")),
+		} {
+			require.NotEqual(t, codes.NotFound, lookupErrToGRPC(err), "err: %v", err)
+		}
+	})
 }
 
 func TestLdapResultCodeToGRPC(t *testing.T) {
