@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -225,9 +226,9 @@ type userAttrUpdate struct {
 // Status codes are deliberately identical regardless of caller: InvalidArgument
 // for a malformed resourceID, NotFound for an out-of-scope or missing user
 // (deliberately indistinguishable, to avoid leaking the existence of entries
-// outside the connector's managed subtree), and a plain wrapped error
-// (surfaced by the SDK as a FAILED action) for a real server modify rejection.
-// actionName only varies message text, never the status code.
+// outside the connector's managed subtree), and — for a real server modify
+// rejection — the code ldapResultCodeToGRPC derives from the server's LDAP
+// result code. actionName only varies message text, never the status code.
 func applyUserAttrUpdate(
 	ctx context.Context,
 	client *ldap.Client,
@@ -289,11 +290,78 @@ func applyUserAttrUpdate(
 		// so they shouldn't trip Error-level alerting. The error is still returned
 		// and surfaced as a FAILED action by the SDK.
 		log.Warn(actionName+": modify failed", fields...)
-		return nil, fmt.Errorf("ldap-connector: %s: failed to modify user %q: %w", actionName, acc.DN, err)
+		return nil, status.Errorf(ldapResultCodeToGRPC(err), "ldap-connector: %s: failed to modify user %q: %v", actionName, acc.DN, err)
 	}
 
 	log.Info(actionName+": success", zap.String("dn", acc.DN), zap.Int("applied", len(changes)), zap.Strings("skipped", skipped))
 	return &userAttrUpdate{DN: acc.DN, Applied: len(changes), Skipped: skipped}, nil
+}
+
+// ldapResultCodeToGRPC maps the LDAP protocol result code carried by err (RFC
+// 4511 section 4.1.9, surfaced by go-ldap as *ldap3.Error.ResultCode) to the
+// gRPC code that best describes whether retrying the operation could succeed.
+// Without this, every server-side rejection reaches the SDK as an
+// undifferentiated error and a transient "server busy" is indistinguishable
+// from a permanent "permission denied".
+//
+// Only the codes a write can realistically hit are enumerated; anything else
+// (including a non-LDAP error, or a nil error) falls through to codes.Unknown.
+// Unknown is deliberate rather than arbitrary: it is exactly what the rest of
+// this package's LDAP failure paths already produce today (createOU's bare
+// fmt.Errorf wraps, for instance, since baton-sdk's finishTask defaults a
+// non-status error to codes.Unknown), so unmapped result codes keep their
+// current classification and only the mapped ones become more specific.
+//
+// Note that go-ldap reports transport failures as the pseudo result code
+// ErrorNetwork (200) rather than a real protocol code; the ldap client already
+// retries those in-process, so one reaching here means its retries were
+// exhausted, which is still a transient condition worth reporting as such.
+func ldapResultCodeToGRPC(err error) codes.Code {
+	var ldapErr *ldap3.Error
+	if !errors.As(err, &ldapErr) {
+		return codes.Unknown
+	}
+
+	switch ldapErr.ResultCode {
+	// Transient: the directory is up but momentarily refusing work, or the
+	// connection failed. A later attempt can plausibly succeed.
+	case ldap3.LDAPResultBusy, ldap3.LDAPResultUnavailable, ldap3.ErrorNetwork:
+		return codes.Unavailable
+	case ldap3.LDAPResultTimeLimitExceeded:
+		return codes.DeadlineExceeded
+
+	// Server-imposed limits. Retryable in principle, but only after the limit
+	// window resets rather than immediately.
+	case ldap3.LDAPResultAdminLimitExceeded, ldap3.LDAPResultSizeLimitExceeded:
+		return codes.ResourceExhausted
+
+	// Terminal: the bind identity is not permitted to make this change.
+	case ldap3.LDAPResultInsufficientAccessRights, ldap3.LDAPResultStrongAuthRequired,
+		ldap3.LDAPResultConfidentialityRequired:
+		return codes.PermissionDenied
+	case ldap3.LDAPResultInvalidCredentials, ldap3.LDAPResultInappropriateAuthentication:
+		return codes.Unauthenticated
+
+	// Terminal: the entry is gone. Distinct from the pre-flight NotFound above,
+	// which covers a lookup that failed before any modify was attempted.
+	case ldap3.LDAPResultNoSuchObject:
+		return codes.NotFound
+
+	// Terminal: the request itself is malformed or violates the schema. Retrying
+	// the identical modify will fail identically.
+	case ldap3.LDAPResultObjectClassViolation, ldap3.LDAPResultConstraintViolation,
+		ldap3.LDAPResultInvalidAttributeSyntax, ldap3.LDAPResultUndefinedAttributeType,
+		ldap3.LDAPResultInvalidDNSyntax, ldap3.LDAPResultNotAllowedOnRDN:
+		return codes.InvalidArgument
+
+	// Terminal: well-formed and permitted, but the server declines in this state
+	// (read-only replica, DIT constraint, policy plugin).
+	case ldap3.LDAPResultUnwillingToPerform:
+		return codes.FailedPrecondition
+
+	default:
+		return codes.Unknown
+	}
 }
 
 // assertDNInScope returns nil when target is equal to, or a descendant of, scope

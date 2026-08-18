@@ -2,6 +2,8 @@ package connector
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -10,6 +12,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -490,4 +493,49 @@ func (r *testRegistry) Register(_ context.Context, schema *v2.BatonActionSchema,
 func (r *testRegistry) RegisterAction(_ context.Context, _ string, schema *v2.BatonActionSchema, _ actions.ActionHandler) error {
 	r.schemas[schema.GetName()] = schema
 	return nil
+}
+
+func TestLdapResultCodeToGRPC(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		// Transient.
+		{"busy", ldap3.NewError(ldap3.LDAPResultBusy, errors.New("busy")), codes.Unavailable},
+		{"unavailable", ldap3.NewError(ldap3.LDAPResultUnavailable, errors.New("down")), codes.Unavailable},
+		{"network", ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset")), codes.Unavailable},
+		{"time limit", ldap3.NewError(ldap3.LDAPResultTimeLimitExceeded, errors.New("slow")), codes.DeadlineExceeded},
+
+		// Server-imposed limits.
+		{"admin limit", ldap3.NewError(ldap3.LDAPResultAdminLimitExceeded, errors.New("limit")), codes.ResourceExhausted},
+		{"size limit", ldap3.NewError(ldap3.LDAPResultSizeLimitExceeded, errors.New("limit")), codes.ResourceExhausted},
+
+		// Terminal.
+		{"insufficient access", ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied")), codes.PermissionDenied},
+		{"invalid credentials", ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind")), codes.Unauthenticated},
+		{"no such object", ldap3.NewError(ldap3.LDAPResultNoSuchObject, errors.New("gone")), codes.NotFound},
+		{"object class violation", ldap3.NewError(ldap3.LDAPResultObjectClassViolation, errors.New("schema")), codes.InvalidArgument},
+		{"constraint violation", ldap3.NewError(ldap3.LDAPResultConstraintViolation, errors.New("constraint")), codes.InvalidArgument},
+		{"not allowed on rdn", ldap3.NewError(ldap3.LDAPResultNotAllowedOnRDN, errors.New("rdn")), codes.InvalidArgument},
+		{"unwilling to perform", ldap3.NewError(ldap3.LDAPResultUnwillingToPerform, errors.New("read-only")), codes.FailedPrecondition},
+
+		// Fallbacks: an unmapped LDAP result code, a non-LDAP error, and nil all
+		// keep the package's pre-existing codes.Unknown classification.
+		{"unmapped ldap code", ldap3.NewError(ldap3.LDAPResultLoopDetect, errors.New("loop")), codes.Unknown},
+		{"non-ldap error", errors.New("boom"), codes.Unknown},
+		{"nil error", nil, codes.Unknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ldapResultCodeToGRPC(tc.err))
+		})
+	}
+
+	// The result code must survive being wrapped, since applyUserAttrUpdate maps
+	// whatever the client layer hands back rather than a bare *ldap3.Error.
+	t.Run("wrapped error", func(t *testing.T) {
+		wrapped := fmt.Errorf("modify failed: %w", ldap3.NewError(ldap3.LDAPResultBusy, errors.New("busy")))
+		require.Equal(t, codes.Unavailable, ldapResultCodeToGRPC(wrapped))
+	})
 }
