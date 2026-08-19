@@ -201,7 +201,7 @@ func (c *Client) LdapGet(ctx context.Context,
 		return nil, err
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("entry not found: %s", searchDN.String())
+		return nil, status.Errorf(codes.NotFound, "baton-ldap: no such object")
 	}
 	if len(entries) > 1 {
 		return nil, fmt.Errorf("%w: %s", ErrMultipleEntries, searchDN.String())
