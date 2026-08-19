@@ -44,7 +44,7 @@ func mkUpdateProfileArgs(t *testing.T, userDN, resourceType string, fields map[s
 }
 
 func TestBuildProfileUpdate(t *testing.T) {
-	t.Run("all four named fields", func(t *testing.T) {
+	t.Run("all four named fields resolve to their real LDAP attributes", func(t *testing.T) {
 		args := mkProfileArgs(t, map[string]interface{}{
 			"first_name":   "Jane",
 			"last_name":    "Doe",
@@ -54,25 +54,27 @@ func TestBuildProfileUpdate(t *testing.T) {
 		attrs, mask, skipped, err := buildProfileUpdate(args)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
-		require.Equal(t, []string{"first_name", "last_name", "display_name", "email"}, mask)
+		require.Equal(t, []string{attrFirstName, attrLastName, attrUserDisplayName, attrUserMail}, mask)
 		require.Equal(t, map[string]string{
-			"first_name":   "Jane",
-			"last_name":    "Doe",
-			"display_name": "Jane Doe",
-			"email":        "jane@example.org",
+			attrFirstName:       "Jane",
+			attrLastName:        "Doe",
+			attrUserDisplayName: "Jane Doe",
+			attrUserMail:        "jane@example.org",
 		}, attrs)
 	})
 
-	t.Run("named field present-but-empty is dropped and reported in skipped", func(t *testing.T) {
+	t.Run("named field present-but-empty is dropped and reported in skipped under its ARGUMENT name", func(t *testing.T) {
 		args := mkProfileArgs(t, map[string]interface{}{
 			"first_name": "",
 			"last_name":  "Doe",
 		})
 		attrs, mask, skipped, err := buildProfileUpdate(args)
 		require.NoError(t, err)
+		// The caller typed "first_name", not "givenName" -- report back what
+		// they supplied even though the mask now carries resolved attributes.
 		require.Equal(t, []string{"first_name"}, skipped)
-		require.Equal(t, []string{"last_name"}, mask)
-		require.Equal(t, map[string]string{"last_name": "Doe"}, attrs)
+		require.Equal(t, []string{attrLastName}, mask)
+		require.Equal(t, map[string]string{attrLastName: "Doe"}, attrs)
 	})
 
 	t.Run("named field absent is neither masked nor skipped", func(t *testing.T) {
@@ -82,8 +84,8 @@ func TestBuildProfileUpdate(t *testing.T) {
 		attrs, mask, skipped, err := buildProfileUpdate(args)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
-		require.Equal(t, []string{"last_name"}, mask)
-		require.Equal(t, map[string]string{"last_name": "Doe"}, attrs)
+		require.Equal(t, []string{attrLastName}, mask)
+		require.Equal(t, map[string]string{attrLastName: "Doe"}, attrs)
 	})
 
 	t.Run("custom_attributes only, mask sorted ascending", func(t *testing.T) {
@@ -129,8 +131,79 @@ func TestBuildProfileUpdate(t *testing.T) {
 		attrs, mask, skipped, err := buildProfileUpdate(args)
 		require.NoError(t, err)
 		require.Equal(t, []string{"First_Name"}, skipped)
-		require.Equal(t, []string{"first_name", "title"}, mask)
-		require.Equal(t, map[string]string{"first_name": "Jane", "title": "Engineer"}, attrs)
+		require.Equal(t, []string{attrFirstName, "title"}, mask)
+		require.Equal(t, map[string]string{attrFirstName: "Jane", "title": "Engineer"}, attrs)
+	})
+
+	t.Run("custom_attributes key colliding with a named field's resolved attribute is dropped (R3)", func(t *testing.T) {
+		// first_name claims givenName, so a raw "givenName" custom entry would
+		// land on the same attrs key and silently clobber it. Named field wins;
+		// the custom entry is reported under the key the caller typed.
+		args := mkProfileArgs(t, map[string]interface{}{
+			"first_name": "Jane",
+			"custom_attributes": map[string]interface{}{
+				"GIVENNAME": "Bob", // case-insensitive collision with givenName
+				"title":     "Engineer",
+			},
+		})
+		attrs, mask, skipped, err := buildProfileUpdate(args)
+		require.NoError(t, err)
+		require.Equal(t, []string{"GIVENNAME"}, skipped)
+		require.Equal(t, []string{attrFirstName, "title"}, mask)
+		require.Equal(t, map[string]string{attrFirstName: "Jane", "title": "Engineer"}, attrs)
+	})
+
+	t.Run("custom_attributes may write a named field's attribute directly when that field claimed no slot", func(t *testing.T) {
+		// Only an actually-claimed slot collides. givenName is a perfectly
+		// ordinary raw attribute name when first_name is absent (or present-but-
+		// empty, and therefore dropped) -- refusing it would be the connector
+		// second-guessing a documented raw attribute name.
+		for name, fields := range map[string]map[string]interface{}{
+			"first_name absent": {
+				"custom_attributes": map[string]interface{}{attrFirstName: "Bob"},
+			},
+			"first_name present-but-empty": {
+				"first_name":        "",
+				"custom_attributes": map[string]interface{}{attrFirstName: "Bob"},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				attrs, mask, _, err := buildProfileUpdate(mkProfileArgs(t, fields))
+				require.NoError(t, err)
+				require.Equal(t, []string{attrFirstName}, mask)
+				require.Equal(t, map[string]string{attrFirstName: "Bob"}, attrs)
+			})
+		}
+	})
+
+	t.Run("custom_attributes user_id is a literal attribute name, never aliased to uid", func(t *testing.T) {
+		// The bug: "user_id" used to resolve through the named-field alias table
+		// on its way to the modify, so this wrote the uid attribute instead --
+		// a different real attribute than the caller named, with no error and no
+		// entry in skipped.
+		args := mkProfileArgs(t, map[string]interface{}{
+			"custom_attributes": map[string]interface{}{"user_id": "somevalue"},
+		})
+		attrs, mask, skipped, err := buildProfileUpdate(args)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Equal(t, []string{"user_id"}, mask)
+		require.Equal(t, map[string]string{"user_id": "somevalue"}, attrs)
+		require.NotContains(t, attrs, attrUserUID, "user_id must not be redirected to the uid attribute")
+	})
+
+	t.Run("custom_attributes login and path are literal attribute names, not skipped synthetic keys", func(t *testing.T) {
+		// baton's synthetic profile keys are no longer special-cased in this
+		// path: they reach the server as raw attribute names and are rejected
+		// there if undefined, rather than being silently dropped by us.
+		args := mkProfileArgs(t, map[string]interface{}{
+			"custom_attributes": map[string]interface{}{"login": "x", schemaFieldPath: "y"},
+		})
+		attrs, mask, skipped, err := buildProfileUpdate(args)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Equal(t, []string{"login", schemaFieldPath}, mask)
+		require.Equal(t, map[string]string{"login": "x", schemaFieldPath: "y"}, attrs)
 	})
 
 	t.Run("custom_attributes collision is dropped even when the named field itself is absent", func(t *testing.T) {
@@ -159,7 +232,7 @@ func TestBuildProfileUpdate(t *testing.T) {
 		_, mask, skipped, err := buildProfileUpdate(args)
 		require.NoError(t, err)
 		require.Empty(t, skipped)
-		require.Equal(t, []string{"first_name", "email", "aaa", "zzz"}, mask)
+		require.Equal(t, []string{attrFirstName, attrUserMail, "aaa", "zzz"}, mask)
 	})
 
 	t.Run("wrong-typed named field errors loudly", func(t *testing.T) {
@@ -214,7 +287,7 @@ func TestBuildProfileUpdate(t *testing.T) {
 				require.Equal(t, first, mask, "mask order must be stable across repeated calls despite map iteration randomization")
 			}
 		}
-		require.Equal(t, []string{"first_name", "a", "b", "m", "q", "y", "z"}, first)
+		require.Equal(t, []string{attrFirstName, "a", "b", "m", "q", "y", "z"}, first)
 	})
 }
 
@@ -466,6 +539,36 @@ func TestUpdateProfile(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
+	})
+
+	t.Run("custom_attributes user_id is a raw attribute name, never an alias for uid", func(t *testing.T) {
+		// End-to-end proof of the aliasing fix: "user_id" used to resolve through
+		// the named-field alias table and rewrite the entry's uid. There is no
+		// attribute literally named user_id in the directory's schema, so the
+		// correct outcome is a loud server rejection with uid untouched.
+		before, err := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{attrUserUID})
+		require.NoError(t, err)
+		uidBefore := before.GetAttributeValues(attrUserUID)
+
+		_, _, err = ub.updateProfile(ctx, mkUpdateProfileArgs(t, userDN, "user", map[string]interface{}{
+			"custom_attributes": map[string]interface{}{"user_id": "hijacked"},
+		}))
+		require.Error(t, err)
+
+		after, err := l.client.LdapGetRaw(ctx, userDN, "(objectClass=*)", []string{attrUserUID})
+		require.NoError(t, err)
+		require.Equal(t, uidBefore, after.GetAttributeValues(attrUserUID), "uid must not be touched by a custom_attributes user_id entry")
+	})
+
+	t.Run("custom_attributes login is attempted as a raw attribute, not silently skipped", func(t *testing.T) {
+		// "login" is one of baton's synthetic profile keys. Through
+		// custom_attributes it means the literal attribute of that name, so an
+		// undefined attribute must fail loudly rather than be dropped by us with
+		// success:true.
+		_, _, err := ub.updateProfile(ctx, mkUpdateProfileArgs(t, userDN, "user", map[string]interface{}{
+			"custom_attributes": map[string]interface{}{"login": "user01"},
+		}))
+		require.Error(t, err)
 	})
 
 	t.Run("clear-vs-error contrast: named empty is a no-op, custom_attributes clearing a MUST attribute is a real server error", func(t *testing.T) {

@@ -234,34 +234,6 @@ func TestAssertDNInScope(t *testing.T) {
 	}
 }
 
-func TestResolveUpdateAttrName(t *testing.T) {
-	cases := []struct {
-		in       string
-		wantAttr string
-		wantSkip bool
-	}{
-		{"first_name", attrFirstName, false},
-		{"last_name", attrLastName, false},
-		{"display_name", attrUserDisplayName, false},
-		{"user_id", attrUserUID, false},
-		{"email", attrUserMail, false},
-		{"First_Name", attrFirstName, false}, // case-insensitive
-		{"login", "", true},
-		{"path", "", true},
-		{"description", "description", false}, // raw pass-through
-		{"telephoneNumber", "telephoneNumber", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			attr, skip := resolveUpdateAttrName(tc.in)
-			require.Equal(t, tc.wantSkip, skip)
-			if !skip {
-				require.Equal(t, tc.wantAttr, attr)
-			}
-		})
-	}
-}
-
 // testActionName is an arbitrary action name used only to exercise
 // buildUserAttrChanges' actionName parameter (it varies error-message text,
 // never behavior); it is not tied to any real registered action.
@@ -311,21 +283,24 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		require.Empty(t, changes)
 	})
 
-	t.Run("alias resolves to real attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(entry, dn,
-			map[string]string{"first_name": "Jane"}, []string{"first_name"}, testActionName)
-		require.NoError(t, err)
-		require.Len(t, changes, 1)
-		require.Equal(t, attrFirstName, changes[0].Modification.Type)
-	})
-
-	t.Run("email alias resolves to mail attribute", func(t *testing.T) {
-		changes, _, err := buildUserAttrChanges(entry, dn,
-			map[string]string{"email": "new@example.org"}, []string{"email"}, testActionName)
-		require.NoError(t, err)
-		require.Len(t, changes, 1)
-		require.Equal(t, attrUserMail, changes[0].Modification.Type)
-		require.Equal(t, []string{"new@example.org"}, changes[0].Modification.Vals)
+	t.Run("mask entries are written verbatim, never alias-resolved", func(t *testing.T) {
+		// Regression guard for the custom_attributes aliasing bug: this function
+		// used to run every mask entry through an alias table, so a caller's raw
+		// attribute name could be silently redirected to a different real
+		// attribute ("user_id" -> uid, "first_name" -> givenName). Resolving
+		// public field names is now buildProfileUpdate's job; here a mask entry
+		// IS the attribute name, whatever it looks like.
+		for _, name := range []string{"user_id", "first_name", "email"} {
+			t.Run(name, func(t *testing.T) {
+				changes, skipped, err := buildUserAttrChanges(entry, dn,
+					map[string]string{name: "v"}, []string{name}, testActionName)
+				require.NoError(t, err)
+				require.Empty(t, skipped)
+				require.Len(t, changes, 1)
+				require.Equal(t, name, changes[0].Modification.Type)
+				require.Equal(t, []string{"v"}, changes[0].Modification.Vals)
+			})
+		}
 	})
 
 	t.Run("mask entry without value is skipped", func(t *testing.T) {
@@ -337,12 +312,24 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		require.Equal(t, "title", changes[0].Modification.Type)
 	})
 
-	t.Run("synthetic keys skipped", func(t *testing.T) {
+	t.Run("baton's synthetic profile keys are no longer special-cased", func(t *testing.T) {
+		// "login" and "path" are baton profile keys, not LDAP attributes, and
+		// used to be silently dropped from any mask. They were only ever
+		// reachable from a caller that passed a baton-profile-shaped mask; the
+		// only caller left builds its mask from raw LDAP attribute names, where
+		// these two mean nothing more than the literal attributes so named.
+		// Skipping them would be the same class of silent misbehavior as the
+		// alias redirect above, so they are attempted and left for the server to
+		// reject (undefinedAttributeType) if the directory has no such attribute.
 		changes, skipped, err := buildUserAttrChanges(entry, dn,
 			map[string]string{"login": "x", "path": "y"}, []string{"login", "path"}, testActionName)
 		require.NoError(t, err)
-		require.Empty(t, changes)
-		require.ElementsMatch(t, []string{"login", "path"}, skipped)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 2)
+		require.Equal(t, "login", changes[0].Modification.Type)
+		require.Equal(t, []string{"x"}, changes[0].Modification.Vals)
+		require.Equal(t, "path", changes[1].Modification.Type)
+		require.Equal(t, []string{"y"}, changes[1].Modification.Vals)
 	})
 
 	t.Run("RDN attribute skipped", func(t *testing.T) {
@@ -385,26 +372,25 @@ func TestBuildUserAttrChanges(t *testing.T) {
 		require.NotContains(t, err.Error(), "update_profile")
 	})
 
-	t.Run("duplicate resolved attr deduped", func(t *testing.T) {
+	t.Run("two mask entries naming the same attribute are deduped, first wins", func(t *testing.T) {
+		// LDAP attribute names are case-insensitive, so these are one attribute.
+		// The first surviving entry claims it; the second is reported skipped
+		// rather than issuing a second, conflicting Replace for the same type.
+		//
+		// (The dedupe's "seen is only marked after the earlier gates" ordering --
+		// so an entry skipped for a missing value cannot shadow a later entry for
+		// the same attribute -- is no longer separately observable: with literal
+		// attribute names, two entries naming the same attribute always fold to
+		// the same key in attrs' case-insensitive index, so either both find a
+		// value or neither does.)
 		changes, skipped, err := buildUserAttrChanges(entry, dn,
-			map[string]string{"user_id": "u1", "uid": "u2"}, []string{"user_id", "uid"}, testActionName)
+			map[string]string{"telephoneNumber": "555-1111", "TelephoneNumber": "555-2222"},
+			[]string{"telephoneNumber", "TelephoneNumber"}, testActionName)
 		require.NoError(t, err)
 		require.Len(t, changes, 1)
-		require.Equal(t, attrUserUID, changes[0].Modification.Type)
-		require.Equal(t, []string{"uid"}, skipped)
-	})
-
-	t.Run("a mask entry skipped for missing value does not block a later entry for the same attribute", func(t *testing.T) {
-		// R5 precedence: "seen" is only marked once an entry survives the earlier
-		// gates, so a mask entry skipped for lack of a value must not shadow a
-		// later entry that resolves to the same attribute and does have one.
-		changes, skipped, err := buildUserAttrChanges(entry, dn,
-			map[string]string{"uid": "newuid"}, []string{"user_id", "uid"}, testActionName)
-		require.NoError(t, err)
-		require.Equal(t, []string{"user_id"}, skipped)
-		require.Len(t, changes, 1)
-		require.Equal(t, attrUserUID, changes[0].Modification.Type)
-		require.Equal(t, []string{"newuid"}, changes[0].Modification.Vals)
+		require.Equal(t, "telephoneNumber", changes[0].Modification.Type)
+		require.Equal(t, []string{"555-1111"}, changes[0].Modification.Vals)
+		require.Equal(t, []string{"TelephoneNumber"}, skipped)
 	})
 
 	t.Run("case-insensitive attrs lookup falls back when mask/attrs key case differs", func(t *testing.T) {

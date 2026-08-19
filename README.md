@@ -83,7 +83,7 @@ custom LDAP attributes on an existing user.
 | `last_name` | no | The user's last (surname) name, mapped to `sn`. Ignored if empty. |
 | `display_name` | no | The user's display name, mapped to `displayName`. Ignored if empty. |
 | `email` | no | The user's email address, mapped to `mail`. Ignored if empty. |
-| `custom_attributes` | no | Map of arbitrary raw LDAP attribute name → value, for attributes beyond the named fields above. An empty value clears the attribute. |
+| `custom_attributes` | no | Map of arbitrary raw LDAP attribute name → value, for attributes beyond the named fields above. Keys are used verbatim as attribute names. An empty value clears the attribute. |
 
 Returns `success`, `updated_user` (the user resource after the update, best-effort
 re-fetched; absent if the read-back failed, though the write itself still succeeded),
@@ -108,10 +108,23 @@ re-fetched; absent if the read-back failed, though the write itself still succee
   but it means those three fields only work against `inetOrgPerson` entries.
 - `custom_attributes` semantics: an entry is written whenever the key is present,
   including with an empty value, which clears the attribute.
-- Collisions: a `custom_attributes` key that case-insensitively matches one of the four
-  named argument names (`first_name`, `last_name`, `display_name`, `email`) is dropped --
-  never merged with, or silently overwriting, the named field's slot -- and reported
-  once in `skipped`.
+- **`custom_attributes` keys are raw, and only the named fields are translated.** The
+  four named arguments above are the only names mapped to a different LDAP attribute
+  (`first_name` → `givenName`, and so on). A `custom_attributes` key is used verbatim as
+  the attribute name, whatever it looks like: `{"user_id": "x"}` writes an attribute
+  literally named `user_id` (and fails with LDAP result code 17, "Undefined Attribute
+  Type", if your directory has no such attribute) -- it does **not** write `uid`.
+  Likewise `login` and `path`, which are baton profile field names rather than LDAP
+  attributes, are attempted as literal attribute names rather than skipped. Only the
+  safety checks below still apply to `custom_attributes` entries; none of them changes
+  the attribute you named.
+- Collisions: a `custom_attributes` key is dropped -- never merged with, or silently
+  overwriting, a named field's slot -- and reported once in `skipped` when it
+  case-insensitively matches either one of the four named argument names (`first_name`,
+  `last_name`, `display_name`, `email`), or the LDAP attribute a supplied named field is
+  writing (`givenName`, `sn`, `displayName`, `mail`). The second case only applies when
+  that named field was actually supplied and non-empty; otherwise
+  `{"givenName": "Jane"}` is an ordinary raw write.
 - The following are **not** modifiable and are rejected or skipped: password attributes
   (`userPassword` / anything containing `password` -- use credential rotation instead),
   `objectClass` (both rejected), and the user's RDN attribute (skipped -- renaming

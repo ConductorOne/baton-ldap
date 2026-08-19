@@ -29,13 +29,39 @@ const (
 	argCustomAttributes = "custom_attributes"
 )
 
-// profileNamedArgs are update_profile's named string fields, in schema and
+// profileNamedField binds one of update_profile's named string arguments to the
+// real LDAP attribute it writes.
+type profileNamedField struct {
+	// arg is the public argument name, as it appears in the action schema and
+	// in the skipped list returned to the caller.
+	arg string
+	// attr is the real LDAP attribute the argument writes.
+	attr string
+}
+
+// profileNamedFields are update_profile's named string fields, in schema and
 // mask-precedence order. Order is load-bearing: it is the deterministic mask
 // order fed to buildUserAttrChanges, which in turn drives its "first surviving
-// entry wins" dedupe rule. Each name doubles as its own mask entry, since all
-// four are already keys in profileAttrAliases (first_name/last_name/
-// display_name/email resolve to givenName/sn/displayName/mail respectively).
-var profileNamedArgs = []string{argFirstName, argLastName, argDisplayName, argEmail}
+// entry wins" dedupe rule.
+//
+// This table is the ONLY place a public field name is translated into an LDAP
+// attribute name. It deliberately does not cover custom_attributes: those keys
+// are documented as raw LDAP attribute names and are passed through verbatim,
+// so a caller who writes "user_id" gets an attribute literally named user_id
+// (and a loud server-side undefinedAttributeType rejection if their directory
+// has no such attribute) rather than a silent redirect to uid.
+//
+// The alias is functionally required for the named fields, not cosmetic:
+// first_name/last_name can carry values derived from splitting cn when
+// givenName/sn are absent, so writing them back only means anything once
+// they're resolved to the real attribute; display_name/email alias for naming
+// consistency with the rest of the public API.
+var profileNamedFields = []profileNamedField{
+	{arg: argFirstName, attr: attrFirstName},         // givenName
+	{arg: argLastName, attr: attrLastName},           // sn
+	{arg: argDisplayName, attr: attrUserDisplayName}, // displayName
+	{arg: argEmail, attr: attrUserMail},              // mail
+}
 
 var _ connectorbuilder.ResourceActionProvider = (*userResourceType)(nil)
 
@@ -56,9 +82,12 @@ func updateProfileActionSchema() *v2.BatonActionSchema {
 		DisplayName: "Update User Profile",
 		Description: "Set core profile fields (first name, last name, display name, email) and/or arbitrary custom LDAP " +
 			"attributes on an existing user. A named field is applied only when it is present and non-empty (it cannot be " +
-			"used to clear an attribute); use custom_attributes with an empty value to clear an attribute. A custom_attributes " +
-			"key that collides with a named field above is dropped and reported in skipped, never merged with it. Password, " +
-			"objectClass, and RDN attributes cannot be modified through this action.",
+			"used to clear an attribute); use custom_attributes with an empty value to clear an attribute. Named fields map to " +
+			"real LDAP attributes (first_name -> givenName, last_name -> sn, display_name -> displayName, email -> mail); " +
+			"custom_attributes keys are used verbatim as LDAP attribute names and are never remapped. A custom_attributes " +
+			"key that collides with a named field above, or with the attribute one of them is writing, is dropped and " +
+			"reported in skipped, never merged with it. Password, objectClass, and RDN attributes cannot be modified " +
+			"through this action.",
 		ActionType: []v2.ActionType{
 			v2.ActionType_ACTION_TYPE_ACCOUNT_UPDATE_PROFILE,
 		},
@@ -104,7 +133,8 @@ func updateProfileActionSchema() *v2.BatonActionSchema {
 				Name:        argCustomAttributes,
 				DisplayName: "Custom Attributes",
 				Description: "Map of arbitrary raw LDAP attribute name to value, for attributes beyond the named fields " +
-					"above. An empty value clears the attribute.",
+					"above. Each key is used verbatim as the LDAP attribute name -- unlike the named fields, it is never " +
+					"translated to a different attribute. An empty value clears the attribute.",
 				Field: &config_sdk.Field_StringMapField{StringMapField: &config_sdk.StringMapField{}},
 			},
 		},
@@ -131,7 +161,8 @@ func updateProfileActionSchema() *v2.BatonActionSchema {
 				Name:        "skipped",
 				DisplayName: "Skipped",
 				Description: "Named fields or custom_attributes entries that were not written: an empty named field, a " +
-					"custom_attributes key colliding with a named field, no value supplied, a synthetic key, or an RDN attribute.",
+					"custom_attributes key colliding with a named field or with the attribute one is writing, no value " +
+					"supplied, or an RDN attribute.",
 				Field: &config_sdk.Field_StringSliceField{StringSliceField: &config_sdk.StringSliceField{}},
 			},
 		},
@@ -155,58 +186,81 @@ func (u *userResourceType) ResourceActions(ctx context.Context, registry actions
 // dropped with no trace in the response -- R4). It is a pure function: no I/O,
 // no logging, deterministic for a given args value.
 //
-// Mask order is: the four named fields in declared order (first_name,
-// last_name, display_name, email), then custom_attributes keys sorted
-// ascending. This is required for deterministic precedence in
-// buildUserAttrChanges' dedupe (which keeps the first mask entry that resolves
-// to a given attribute) and to make Go's randomized map iteration order a
-// non-issue for repeated calls with the same input.
+// Name resolution happens HERE and nowhere downstream. Named fields are
+// translated to their real LDAP attribute through profileNamedFields
+// (first_name -> givenName, and so on), so the mask this returns is entirely
+// literal LDAP attribute names: a resolved named-field attribute, or a
+// custom_attributes key passed through verbatim. buildUserAttrChanges then
+// writes exactly what it is given. custom_attributes is documented as taking
+// raw LDAP attribute names, and this is what makes that true -- previously
+// every key ran through the same alias table as the named fields, so
+// custom_attributes["user_id"] silently wrote uid instead.
+//
+// Mask order is: the named fields' attributes in declared order (givenName, sn,
+// displayName, mail), then custom_attributes keys sorted ascending. This is
+// required for deterministic precedence in buildUserAttrChanges' dedupe (which
+// keeps the first mask entry naming a given attribute) and to make Go's
+// randomized map iteration order a non-issue for repeated calls with the same
+// input.
 //
 // Named-field semantics: a named field is included in the mask only when
 // present AND non-empty (it cannot be used to clear an attribute); present-but-
 // empty is reported in skipped rather than silently vanishing (R4). This
 // mirrors buildUserAttrChanges' own "empty value clears" rule for
 // custom_attributes, which is included whenever the key is present, regardless
-// of value.
+// of value. Note that skipped reports the ARGUMENT name (first_name) rather
+// than the attribute (givenName), since that is the name the caller supplied.
 //
-// Collision rule (R3): a custom_attributes key that case-insensitively matches
-// one of the four named-argument names is dropped before it ever reaches the
-// attrs/mask pair (never merged with, or silently overwriting, the named
-// field's slot) and is reported once in skipped. This applies to the key
-// itself, regardless of whether the corresponding named argument was actually
-// supplied -- the reserved name is what's protected, not just an active value
-// collision. Without this, a custom_attributes key with the exact same string
-// as a named argument would collide as a map key in the returned attrs map
-// (last write wins), silently clobbering one value with the other.
+// Collision rules (R3): a custom_attributes key is dropped before it ever
+// reaches the attrs/mask pair -- never merged with, or silently overwriting, a
+// named field's slot -- and reported once in skipped when it case-insensitively
+// matches either
+//
+//   - one of the four named-argument names (first_name, last_name,
+//     display_name, email). This applies regardless of whether the
+//     corresponding named argument was actually supplied: the reserved name is
+//     what's protected, not just an active value collision.
+//   - the real LDAP attribute of a named field that DID claim a mask slot
+//     (givenName, sn, displayName, mail). Only an actually-claimed slot
+//     collides, so custom_attributes["givenName"] remains a perfectly valid raw
+//     write whenever first_name is absent or present-but-empty.
+//
+// Without these, a colliding custom_attributes key would land on the same map
+// key in the returned attrs (last write wins), silently clobbering one value
+// with the other.
 func buildProfileUpdate(args *structpb.Struct) (map[string]string, []string, []string, error) {
 	attrs := map[string]string{}
 	var mask []string
 	var skipped []string
 
-	namedLower := make(map[string]bool, len(profileNamedArgs))
-	for _, name := range profileNamedArgs {
-		namedLower[strings.ToLower(name)] = true
+	// Reserved names a custom_attributes key may not use: the named-argument
+	// names always, plus the real attribute of any named field that actually
+	// claimed a mask slot below.
+	reserved := make(map[string]bool, len(profileNamedFields)*2)
+	for _, f := range profileNamedFields {
+		reserved[strings.ToLower(f.arg)] = true
 	}
 
-	for _, name := range profileNamedArgs {
-		value, present := args.GetFields()[name]
+	for _, f := range profileNamedFields {
+		value, present := args.GetFields()[f.arg]
 		if !present {
 			// Absent is distinct from present-but-empty: nothing to report.
 			continue
 		}
 		strVal, ok := value.GetKind().(*structpb.Value_StringValue)
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("argument %q must be a string value", name)
+			return nil, nil, nil, fmt.Errorf("argument %q must be a string value", f.arg)
 		}
 		if strVal.StringValue == "" {
 			// R4: present-but-empty is dropped from the mask (named fields
 			// cannot clear an attribute) but must be observable in the
 			// response, not silently vanish.
-			skipped = append(skipped, name)
+			skipped = append(skipped, f.arg)
 			continue
 		}
-		attrs[name] = strVal.StringValue
-		mask = append(mask, name)
+		attrs[f.attr] = strVal.StringValue
+		mask = append(mask, f.attr)
+		reserved[strings.ToLower(f.attr)] = true
 	}
 
 	custStruct, err := requireOptionalStructArg(args, argCustomAttributes)
@@ -231,11 +285,12 @@ func buildProfileUpdate(args *structpb.Struct) (map[string]string, []string, []s
 	sort.Strings(customKeys)
 
 	for _, k := range customKeys {
-		if namedLower[strings.ToLower(k)] {
+		if reserved[strings.ToLower(k)] {
 			// R3: drop, don't merge/overwrite; report once.
 			skipped = append(skipped, k)
 			continue
 		}
+		// Verbatim: a custom_attributes key IS the LDAP attribute name.
 		attrs[k] = custom[k]
 		mask = append(mask, k)
 	}

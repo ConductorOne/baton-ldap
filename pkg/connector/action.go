@@ -32,25 +32,6 @@ const (
 	ldapAttrObjectClass = "objectClass"
 )
 
-// profileAttrAliases maps baton-ldap's synthetic user-profile keys (produced by
-// userResource) to the real LDAP attribute they represent. A mask name not in
-// this map (and not in profileSyntheticSkip) is treated as a raw LDAP attribute
-// name. Keys are compared case-insensitively.
-var profileAttrAliases = map[string]string{
-	"first_name":   attrFirstName,       // givenName
-	"last_name":    attrLastName,        // sn
-	"display_name": attrUserDisplayName, // displayName
-	"user_id":      attrUserUID,         // uid
-	"email":        attrUserMail,        // mail
-}
-
-// profileSyntheticSkip are synthetic profile keys with no single LDAP attribute
-// to write. If present in the update mask they are skipped (reported, not written).
-var profileSyntheticSkip = map[string]bool{
-	"login":         true,
-	schemaFieldPath: true, // "path"
-}
-
 var _ connectorbuilder.GlobalActionProvider = (*LDAP)(nil)
 
 // buildOUDN validates the OU name and parent, enforces the fail-closed base-dn
@@ -222,6 +203,9 @@ type userAttrUpdate struct {
 // early return of its own: updateProfile needs the full pipeline to run even
 // for an empty mask, so a vanished/out-of-scope user still surfaces as
 // NotFound instead of a false success.
+//
+// mask entries and attrs keys are literal LDAP attribute names; no aliasing or
+// name translation happens at or below this point (see buildUserAttrChanges).
 //
 // Status codes are deliberately identical regardless of caller: InvalidArgument
 // for a malformed resourceID, NotFound for an out-of-scope or missing user
@@ -448,33 +432,29 @@ func assertDNInScope(target, scope *ldap3.DN) error {
 	return nil
 }
 
-// resolveUpdateAttrName resolves a mask entry to a real LDAP attribute name. The
-// second return is true for synthetic profile keys that map to no single attribute
-// and should therefore be skipped.
-func resolveUpdateAttrName(maskName string) (string, bool) {
-	lower := strings.ToLower(maskName)
-	if profileSyntheticSkip[lower] {
-		return "", true
-	}
-	if alias, ok := profileAttrAliases[lower]; ok {
-		return alias, false
-	}
-	return maskName, false
-}
-
 // buildUserAttrChanges turns the update mask into a set of LDAP Replace changes,
 // reading current values from entry so already-satisfied changes are dropped
 // (idempotent re-runs). actionName is used only in error messages, so the
 // caller (e.g. update_profile) is named accurately in a denylisted-attribute
-// error. Rules:
-//   - synthetic keys (login, path) -> skipped
+// error.
+//
+// Every mask entry is a LITERAL LDAP attribute name. This function performs no
+// name translation of any kind: the attribute written is byte-for-byte the mask
+// entry it came from. Any mapping from a public, API-level field name to the
+// real attribute behind it (update_profile's first_name -> givenName, for
+// instance) is the caller's job and must already have happened -- see
+// buildProfileUpdate. Doing it here instead would silently redirect a caller's
+// raw attribute name to a different real attribute, which is exactly the bug
+// custom_attributes hit when this function still owned an alias table.
+//
+// Rules:
 //   - password* and objectClass    -> hard error (use credential rotation / not allowed)
 //   - the target's RDN attribute(s) -> skipped (cannot be changed via Modify)
 //   - a mask entry with no value in attrs -> skipped (attrs is looked up by
 //     exact key match first, falling back to a case-insensitive match)
-//   - the first mask entry that survives synthetic-skip/RDN/password-denylist/
-//     missing-value filtering claims the attribute; later entries resolving to
-//     the same attribute are skipped (the seen[lower] dedupe only fires after
+//   - the first mask entry that survives RDN/password-denylist/missing-value
+//     filtering claims the attribute; later entries naming the same attribute
+//     (case-insensitively) are skipped (the seen[lower] dedupe only fires after
 //     those other gates -- a mask entry skipped by one of those gates does not
 //     block a later entry for the same attribute)
 //   - empty value -> clear (Replace with no values); skipped if already absent
@@ -492,7 +472,7 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 	var changes []ldap3.Change
 	var skipped []string
 
-	// Case-insensitive fallback index over attrs, built once. attrs[maskName] is
+	// Case-insensitive fallback index over attrs, built once. attrs[attrName] is
 	// always tried first (exact match); this index only matters when a mask
 	// entry's case doesn't exactly match its key in attrs (bug #3). If two attrs
 	// keys fold to the same lowercase, the first one encountered during this
@@ -506,39 +486,33 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 		}
 	}
 
-	for _, maskName := range mask {
-		attrName, skip := resolveUpdateAttrName(maskName)
-		if skip {
-			skipped = append(skipped, maskName)
-			continue
-		}
-
+	for _, attrName := range mask {
 		if strings.Contains(strings.ToLower(attrName), "password") {
-			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s; use credential rotation instead", maskName, actionName)
+			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s; use credential rotation instead", attrName, actionName)
 		}
 		if strings.EqualFold(attrName, ldapAttrObjectClass) {
-			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s", maskName, actionName)
+			return nil, nil, fmt.Errorf("attribute %q cannot be modified via %s", attrName, actionName)
 		}
 
 		if rdnTypes[strings.ToLower(attrName)] {
 			// The RDN attribute value cannot be replaced in place (that requires
 			// a ModifyDN); skip rather than fail an otherwise-valid batch.
-			skipped = append(skipped, maskName)
+			skipped = append(skipped, attrName)
 			continue
 		}
 
-		value, ok := attrs[maskName]
+		value, ok := attrs[attrName]
 		if !ok {
-			value, ok = lowerAttrs[strings.ToLower(maskName)]
+			value, ok = lowerAttrs[strings.ToLower(attrName)]
 		}
 		if !ok {
-			skipped = append(skipped, maskName)
+			skipped = append(skipped, attrName)
 			continue
 		}
 
 		lower := strings.ToLower(attrName)
 		if seen[lower] {
-			skipped = append(skipped, maskName)
+			skipped = append(skipped, attrName)
 			continue
 		}
 		seen[lower] = true
@@ -562,7 +536,7 @@ func buildUserAttrChanges(entry *ldap.Entry, targetDN *ldap3.DN, attrs map[strin
 			// collapsing, matching the password/objectClass denylist checks
 			// above.
 			return nil, nil, fmt.Errorf("attribute %q has %d existing values; refusing to replace them with a single value via %s (clear the attribute first if this is intentional)",
-				maskName, len(current), actionName)
+				attrName, len(current), actionName)
 		}
 		if len(current) == 1 && current[0] == value {
 			continue // already set to exactly this value
