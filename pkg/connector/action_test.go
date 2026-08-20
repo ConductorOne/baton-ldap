@@ -2,6 +2,8 @@ package connector
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -10,6 +12,8 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -188,6 +192,278 @@ func TestCreateOU(t *testing.T) {
 	})
 }
 
+func mustDN(t *testing.T, s string) *ldap3.DN {
+	t.Helper()
+	dn, err := ldap3.ParseDN(s)
+	require.NoError(t, err)
+	return dn
+}
+
+func entryWith(dn string, attrs map[string][]string) *ldap.Entry {
+	e := &ldap3.Entry{DN: dn}
+	for name, vals := range attrs {
+		e.Attributes = append(e.Attributes, &ldap3.EntryAttribute{Name: name, Values: vals})
+	}
+	return e
+}
+
+func TestAssertDNInScope(t *testing.T) {
+	scope := mustDN(t, "ou=users,dc=example,dc=org")
+	tests := []struct {
+		name    string
+		target  string
+		scope   *ldap3.DN
+		wantErr bool
+	}{
+		{"descendant", "cn=user01,ou=users,dc=example,dc=org", scope, false},
+		{"equal", "ou=users,dc=example,dc=org", scope, false},
+		{"case-insensitive", "CN=User01,OU=Users,DC=Example,DC=Org", scope, false},
+		{"sibling out of scope", "cn=user01,ou=admins,dc=example,dc=org", scope, true},
+		{"ancestor out of scope", "dc=example,dc=org", scope, true},
+		{"nil scope", "cn=user01,ou=users,dc=example,dc=org", nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := assertDNInScope(mustDN(t, tt.target), tt.scope)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// testActionName is an arbitrary action name used only to exercise
+// buildUserAttrChanges' actionName parameter (it varies error-message text,
+// never behavior); it is not tied to any real registered action.
+const testActionName = "test_action"
+
+func TestBuildUserAttrChanges(t *testing.T) {
+	dn := mustDN(t, "cn=user01,ou=users,dc=example,dc=org")
+	entry := entryWith("cn=user01,ou=users,dc=example,dc=org", map[string][]string{
+		"cn":           {"user01"},
+		"description":  {"existing"},
+		"title":        {"Engineer"},
+		"mail":         {"user01@example.org"},
+		"otherMailbox": {"alt1@example.org", "alt2@example.org"},
+	})
+
+	t.Run("set new value", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"telephoneNumber": "555-1234"}, []string{"telephoneNumber"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Equal(t, "telephoneNumber", changes[0].Modification.Type)
+		require.Equal(t, []string{"555-1234"}, changes[0].Modification.Vals)
+	})
+
+	t.Run("clear existing attribute", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"description": ""}, []string{"description"}, testActionName)
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Empty(t, changes[0].Modification.Vals)
+	})
+
+	t.Run("no-op when value already set", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"title": "Engineer"}, []string{"title"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, changes)
+	})
+
+	t.Run("no-op when clearing an absent attribute", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"telephoneNumber": ""}, []string{"telephoneNumber"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, changes)
+	})
+
+	t.Run("mask entries are written verbatim, never alias-resolved", func(t *testing.T) {
+		// Regression guard for the custom_attributes aliasing bug: this function
+		// used to run every mask entry through an alias table, so a caller's raw
+		// attribute name could be silently redirected to a different real
+		// attribute ("user_id" -> uid, "first_name" -> givenName). Resolving
+		// public field names is now buildProfileUpdate's job; here a mask entry
+		// IS the attribute name, whatever it looks like.
+		for _, name := range []string{"user_id", "first_name", "email"} {
+			t.Run(name, func(t *testing.T) {
+				changes, skipped, err := buildUserAttrChanges(entry, dn,
+					map[string]string{name: "v"}, []string{name}, testActionName)
+				require.NoError(t, err)
+				require.Empty(t, skipped)
+				require.Len(t, changes, 1)
+				require.Equal(t, name, changes[0].Modification.Type)
+				require.Equal(t, []string{"v"}, changes[0].Modification.Vals)
+			})
+		}
+	})
+
+	t.Run("mask entry without value is skipped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"title": "Manager"}, []string{"title", "mail"}, testActionName)
+		require.NoError(t, err)
+		require.Equal(t, []string{"mail"}, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, "title", changes[0].Modification.Type)
+	})
+
+	t.Run("baton's synthetic profile keys are no longer special-cased", func(t *testing.T) {
+		// "login" and "path" are baton profile keys, not LDAP attributes, and
+		// used to be silently dropped from any mask. They were only ever
+		// reachable from a caller that passed a baton-profile-shaped mask; the
+		// only caller left builds its mask from raw LDAP attribute names, where
+		// these two mean nothing more than the literal attributes so named.
+		// Skipping them would be the same class of silent misbehavior as the
+		// alias redirect above, so they are attempted and left for the server to
+		// reject (undefinedAttributeType) if the directory has no such attribute.
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"login": "x", "path": "y"}, []string{"login", "path"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 2)
+		require.Equal(t, "login", changes[0].Modification.Type)
+		require.Equal(t, []string{"x"}, changes[0].Modification.Vals)
+		require.Equal(t, "path", changes[1].Modification.Type)
+		require.Equal(t, []string{"y"}, changes[1].Modification.Vals)
+	})
+
+	t.Run("RDN attribute skipped", func(t *testing.T) {
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"cn": "renamed"}, []string{"cn"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, changes)
+		require.Equal(t, []string{"cn"}, skipped)
+	})
+
+	t.Run("password attribute rejected", func(t *testing.T) {
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, testActionName)
+		require.Error(t, err)
+	})
+
+	t.Run("objectClass rejected", func(t *testing.T) {
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"objectClass": "person"}, []string{"objectClass"}, testActionName)
+		require.Error(t, err)
+	})
+
+	t.Run("denylist error message names the calling action, not a hardcoded one", func(t *testing.T) {
+		// R1: buildUserAttrChanges must not hardcode any specific action name in
+		// its denylist error messages -- a caller like update_profile passes its
+		// own actionName so the customer sees the right action name. Proven by
+		// varying actionName across two calls and checking the error tracks
+		// whichever one was actually passed, not by checking for the mere
+		// absence of an unrelated, never-supplied string.
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, "update_profile")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "update_profile")
+		require.NotContains(t, err.Error(), testActionName)
+
+		_, _, err = buildUserAttrChanges(entry, dn,
+			map[string]string{"userPassword": "secret"}, []string{"userPassword"}, testActionName)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), testActionName)
+		require.NotContains(t, err.Error(), "update_profile")
+	})
+
+	t.Run("two mask entries naming the same attribute are deduped, first wins", func(t *testing.T) {
+		// LDAP attribute names are case-insensitive, so these are one attribute.
+		// The first surviving entry claims it; the second is reported skipped
+		// rather than issuing a second, conflicting Replace for the same type.
+		//
+		// (The dedupe's "seen is only marked after the earlier gates" ordering --
+		// so an entry skipped for a missing value cannot shadow a later entry for
+		// the same attribute -- is no longer separately observable: with literal
+		// attribute names, two entries naming the same attribute always fold to
+		// the same key in attrs' case-insensitive index, so either both find a
+		// value or neither does.)
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"telephoneNumber": "555-1111", "TelephoneNumber": "555-2222"},
+			[]string{"telephoneNumber", "TelephoneNumber"}, testActionName)
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, "telephoneNumber", changes[0].Modification.Type)
+		require.Equal(t, []string{"555-1111"}, changes[0].Modification.Vals)
+		require.Equal(t, []string{"TelephoneNumber"}, skipped)
+	})
+
+	t.Run("case-insensitive attrs lookup falls back when mask/attrs key case differs", func(t *testing.T) {
+		// Bug #3: attrs is keyed by "TelephoneNumber" but the mask entry (and the
+		// resolved LDAP attribute name) is "telephoneNumber" -- an exact map
+		// lookup would miss this; the case-insensitive fallback must catch it.
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"TelephoneNumber": "555-2000"}, []string{"telephoneNumber"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, []string{"555-2000"}, changes[0].Modification.Vals)
+	})
+
+	t.Run("exact-case attrs key wins over the case-insensitive fallback", func(t *testing.T) {
+		changes, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"description": "exact", "Description": "fallback"}, []string{"description"}, testActionName)
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		require.Equal(t, []string{"exact"}, changes[0].Modification.Vals)
+	})
+
+	t.Run("setting a non-empty value on a multi-valued attribute is a hard error", func(t *testing.T) {
+		// Bug #2 fix: buildUserAttrChanges previously collapsed a multi-valued
+		// attribute down to the single supplied value, silently discarding every
+		// other existing value with success:true and no signal to the caller.
+		// That pinning test documented the bug deliberately so a future fix
+		// would be a reviewed change, not an accidental side effect -- this is
+		// that fix. Setting a specific non-empty value must now abort the whole
+		// batch instead of collapsing.
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, testActionName)
+		require.Error(t, err)
+		require.Nil(t, changes)
+		require.Nil(t, skipped)
+		require.Contains(t, err.Error(), "otherMailbox")
+		require.Contains(t, err.Error(), "2")
+		require.Contains(t, err.Error(), testActionName)
+	})
+
+	t.Run("multi-valued attribute error message names the calling action, not a hardcoded one", func(t *testing.T) {
+		// Proven by varying actionName across two calls and checking the error
+		// tracks whichever one was actually passed, not by checking for the
+		// mere absence of an unrelated, never-supplied string.
+		_, _, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, "update_profile")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "update_profile")
+		require.NotContains(t, err.Error(), testActionName)
+
+		_, _, err = buildUserAttrChanges(entry, dn,
+			map[string]string{"otherMailbox": "new@example.org"}, []string{"otherMailbox"}, testActionName)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), testActionName)
+		require.NotContains(t, err.Error(), "update_profile")
+	})
+
+	t.Run("clearing a multi-valued attribute is not data loss and still succeeds", func(t *testing.T) {
+		// The nuance: an empty value is an explicit, intentional "remove all
+		// values" operation (LDAP Replace with no values), regardless of how
+		// many values the attribute currently holds. Only setting a specific
+		// non-empty value on a multi-valued attribute is refused.
+		changes, skipped, err := buildUserAttrChanges(entry, dn,
+			map[string]string{"otherMailbox": ""}, []string{"otherMailbox"}, testActionName)
+		require.NoError(t, err)
+		require.Empty(t, skipped)
+		require.Len(t, changes, 1)
+		require.Equal(t, uint(ldap3.ReplaceAttribute), changes[0].Operation)
+		require.Equal(t, "otherMailbox", changes[0].Modification.Type)
+		require.Empty(t, changes[0].Modification.Vals)
+	})
+}
+
 type testRegistry struct {
 	schemas map[string]*v2.BatonActionSchema
 }
@@ -204,4 +480,126 @@ func (r *testRegistry) Register(_ context.Context, schema *v2.BatonActionSchema,
 func (r *testRegistry) RegisterAction(_ context.Context, _ string, schema *v2.BatonActionSchema, _ actions.ActionHandler) error {
 	r.schemas[schema.GetName()] = schema
 	return nil
+}
+
+// TestLookupErrToGRPC pins the discrimination applyUserAttrUpdate depends on:
+// only a confirmed zero-result read may become NotFound. The error shapes below
+// are the ones pkg/ldap actually produces (see LdapGetWithStringDN and
+// _ldapSearch), each wrapped the way getAccount wraps them.
+func TestLookupErrToGRPC(t *testing.T) {
+	// getAccount's wrapper. Every error reaching lookupErrToGRPC has been through it.
+	wrap := func(err error) error {
+		return fmt.Errorf("ldap-connector: failed to get user: %w", err)
+	}
+	notFoundStatus := status.Errorf(codes.NotFound, "baton-ldap: no such object")
+
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"nil", nil, codes.OK},
+
+		// Genuinely absent. Two shapes: the client's own zero-results synthesis,
+		// and the server answering noSuchObject (joined with the same status).
+		{"zero results", wrap(notFoundStatus), codes.NotFound},
+		{"bare zero results", notFoundStatus, codes.NotFound},
+		{
+			"server no such object",
+			wrap(errors.Join(notFoundStatus, ldap3.NewError(ldap3.LDAPResultNoSuchObject, errors.New("gone")))),
+			codes.NotFound,
+		},
+
+		// Directory data-integrity problem: the user exists twice. Must not be
+		// NotFound, and must not look retryable.
+		{
+			"multiple entries",
+			wrap(fmt.Errorf("%w: %s", ldap.ErrMultipleEntries, "uid=dupe,ou=users,dc=example,dc=com")),
+			codes.Internal,
+		},
+
+		// Transport failures. The connector already exhausted its retries, but the
+		// condition is still transient, not a missing user.
+		{"network result code", wrap(ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset"))), codes.Unavailable},
+		{"truncated response", wrap(errors.New("unable to read LDAP response packet: EOF")), codes.Unavailable},
+
+		// Bind/permission failures against the directory, not a caller mistake.
+		{"invalid credentials", wrap(ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind"))), codes.Unauthenticated},
+		{"insufficient access", wrap(ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied"))), codes.PermissionDenied},
+		{"admin limit", wrap(ldap3.NewError(ldap3.LDAPResultAdminLimitExceeded, errors.New("limit"))), codes.ResourceExhausted},
+		{"unwilling to perform", wrap(ldap3.NewError(ldap3.LDAPResultUnwillingToPerform, errors.New("policy"))), codes.FailedPrecondition},
+
+		// Context errors come from the connection pool, not from LDAP.
+		{"canceled", wrap(context.Canceled), codes.Canceled},
+		{"deadline exceeded", wrap(context.DeadlineExceeded), codes.DeadlineExceeded},
+
+		// Unclassifiable errors keep the package's pre-existing Unknown, rather
+		// than being guessed into a retryable or terminal bucket.
+		{"unmapped ldap code", wrap(ldap3.NewError(ldap3.LDAPResultLoopDetect, errors.New("loop"))), codes.Unknown},
+		{"non-ldap error", wrap(errors.New("boom")), codes.Unknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, lookupErrToGRPC(tc.err))
+		})
+	}
+
+	// The regression this function exists to prevent: every non-absent failure
+	// used to be reported as NotFound.
+	t.Run("only absence is NotFound", func(t *testing.T) {
+		for _, err := range []error{
+			wrap(fmt.Errorf("%w: %s", ldap.ErrMultipleEntries, "uid=dupe,dc=example,dc=com")),
+			wrap(ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset"))),
+			wrap(ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind"))),
+			wrap(ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied"))),
+			wrap(errors.New("boom")),
+		} {
+			require.NotEqual(t, codes.NotFound, lookupErrToGRPC(err), "err: %v", err)
+		}
+	})
+}
+
+func TestLdapResultCodeToGRPC(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		// Transient.
+		{"busy", ldap3.NewError(ldap3.LDAPResultBusy, errors.New("busy")), codes.Unavailable},
+		{"unavailable", ldap3.NewError(ldap3.LDAPResultUnavailable, errors.New("down")), codes.Unavailable},
+		{"network", ldap3.NewError(ldap3.ErrorNetwork, errors.New("conn reset")), codes.Unavailable},
+		{"time limit", ldap3.NewError(ldap3.LDAPResultTimeLimitExceeded, errors.New("slow")), codes.DeadlineExceeded},
+
+		// Server-imposed limits.
+		{"admin limit", ldap3.NewError(ldap3.LDAPResultAdminLimitExceeded, errors.New("limit")), codes.ResourceExhausted},
+		{"size limit", ldap3.NewError(ldap3.LDAPResultSizeLimitExceeded, errors.New("limit")), codes.ResourceExhausted},
+
+		// Terminal.
+		{"insufficient access", ldap3.NewError(ldap3.LDAPResultInsufficientAccessRights, errors.New("denied")), codes.PermissionDenied},
+		{"invalid credentials", ldap3.NewError(ldap3.LDAPResultInvalidCredentials, errors.New("bad bind")), codes.Unauthenticated},
+		{"no such object", ldap3.NewError(ldap3.LDAPResultNoSuchObject, errors.New("gone")), codes.NotFound},
+		{"object class violation", ldap3.NewError(ldap3.LDAPResultObjectClassViolation, errors.New("schema")), codes.InvalidArgument},
+		{"constraint violation", ldap3.NewError(ldap3.LDAPResultConstraintViolation, errors.New("constraint")), codes.InvalidArgument},
+		{"not allowed on rdn", ldap3.NewError(ldap3.LDAPResultNotAllowedOnRDN, errors.New("rdn")), codes.InvalidArgument},
+		{"unwilling to perform", ldap3.NewError(ldap3.LDAPResultUnwillingToPerform, errors.New("read-only")), codes.FailedPrecondition},
+
+		// Fallbacks: an unmapped LDAP result code, a non-LDAP error, and nil all
+		// keep the package's pre-existing codes.Unknown classification.
+		{"unmapped ldap code", ldap3.NewError(ldap3.LDAPResultLoopDetect, errors.New("loop")), codes.Unknown},
+		{"non-ldap error", errors.New("boom"), codes.Unknown},
+		{"nil error", nil, codes.Unknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ldapResultCodeToGRPC(tc.err))
+		})
+	}
+
+	// The result code must survive being wrapped, since applyUserAttrUpdate maps
+	// whatever the client layer hands back rather than a bare *ldap3.Error.
+	t.Run("wrapped error", func(t *testing.T) {
+		wrapped := fmt.Errorf("modify failed: %w", ldap3.NewError(ldap3.LDAPResultBusy, errors.New("busy")))
+		require.Equal(t, codes.Unavailable, ldapResultCodeToGRPC(wrapped))
+	})
 }

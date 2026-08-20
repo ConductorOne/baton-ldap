@@ -71,6 +71,74 @@ Returns `ou_dn` (the created OU's DN) and `success`.
 - The action is idempotent: creating an OU that already exists succeeds.
 - The bind account must have permission to create entries at the target location.
 
+## `update_profile`
+
+Sets core profile fields (first name, last name, display name, email) and/or arbitrary
+custom LDAP attributes on an existing user.
+
+| Argument | Required | Description |
+|---|---|---|
+| `user_id` | yes | Resource ID reference to the user to update. |
+| `first_name` | no | The user's first (given) name, mapped to `givenName`. Ignored if empty. |
+| `last_name` | no | The user's last (surname) name, mapped to `sn`. Ignored if empty. |
+| `display_name` | no | The user's display name, mapped to `displayName`. Ignored if empty. |
+| `email` | no | The user's email address, mapped to `mail`. Ignored if empty. |
+| `custom_attributes` | no | Map of arbitrary raw LDAP attribute name → value, for attributes beyond the named fields above. Keys are used verbatim as attribute names. An empty value clears the attribute. |
+
+Returns `success`, `updated_user` (the user resource after the update, best-effort
+re-fetched; absent if the read-back failed, though the write itself still succeeded),
+`applied` (the number of attributes modified), and `skipped` (named fields or
+`custom_attributes` entries that were not written).
+
+**Notes:**
+- Scope: this action is **resource-scoped to `user`**. Resource-scoping is what makes
+  `update_profile` discoverable and usable from ConductorOne's attribute-push-rule
+  feature, since that feature offers actions per resource type rather than the
+  connector's global action list.
+- Named-field semantics: `first_name`, `last_name`, `display_name`, and `email` are only
+  applied when present **and non-empty** -- they cannot be used to clear an attribute. A
+  present-but-empty named field is dropped from the write and reported in `skipped`
+  rather than silently vanishing.
+- `inetOrgPerson` requirement: of the four named fields, only `last_name` (`sn`) is
+  universal -- it's a MUST attribute of the base `person` object class. `first_name`
+  (`givenName`), `display_name` (`displayName`), and `email` (`mail`) are only defined by
+  RFC 2798's `inetOrgPerson` object class; writing one of them to an entry that doesn't
+  carry `inetOrgPerson` fails loudly with LDAP result code 65 ("Object Class Violation").
+  This is safe -- the failure is atomic, with no partial write and no data corruption --
+  but it means those three fields only work against `inetOrgPerson` entries.
+- `custom_attributes` semantics: an entry is written whenever the key is present,
+  including with an empty value, which clears the attribute.
+- **`custom_attributes` keys are raw, and only the named fields are translated.** The
+  four named arguments above are the only names mapped to a different LDAP attribute
+  (`first_name` → `givenName`, and so on). A `custom_attributes` key is used verbatim as
+  the attribute name, whatever it looks like: `{"user_id": "x"}` writes an attribute
+  literally named `user_id` (and fails with LDAP result code 17, "Undefined Attribute
+  Type", if your directory has no such attribute) -- it does **not** write `uid`.
+  Likewise `login` and `path`, which are baton profile field names rather than LDAP
+  attributes, are attempted as literal attribute names rather than skipped. Only the
+  safety checks below still apply to `custom_attributes` entries; none of them changes
+  the attribute you named.
+- Collisions: a `custom_attributes` key is dropped -- never merged with, or silently
+  overwriting, a named field's slot -- and reported once in `skipped` when it
+  case-insensitively matches either one of the four named argument names (`first_name`,
+  `last_name`, `display_name`, `email`), or the LDAP attribute a supplied named field is
+  writing (`givenName`, `sn`, `displayName`, `mail`). The second case only applies when
+  that named field was actually supplied and non-empty; otherwise
+  `{"givenName": "Jane"}` is an ordinary raw write.
+- The following are **not** modifiable and are rejected or skipped: password attributes
+  (`userPassword` / anything containing `password` -- use credential rotation instead),
+  `objectClass` (both rejected), and the user's RDN attribute (skipped -- renaming
+  requires a ModifyDN).
+- **Multi-valued attributes:** setting (not clearing) a value on an attribute that
+  currently holds more than one value now returns an error instead of silently
+  discarding the extra values. Clearing (an empty value) a multi-valued attribute is
+  unaffected and still removes all values -- that remains an explicit, intentional
+  "remove all values" operation.
+- Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
+  out-of-scope or non-user DNs are rejected as "not found" (fail-closed).
+- Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
+  to run, and the bind account must have permission to modify the target entry.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose

@@ -38,13 +38,32 @@ type Client struct {
 
 type Entry = ldap.Entry
 
-func isNetworkError(err error) bool {
+// ErrMultipleEntries is returned by the single-entry fetch helpers (LdapGet,
+// LdapGetWithStringDN, LdapGetRaw) when a base-scoped read of one DN matched
+// more than one entry. A well-behaved directory cannot do this, so callers must
+// be able to tell it apart from "the entry is absent": it is a data-integrity
+// problem, not a missing user, and reporting it as NotFound would send the
+// caller looking for the wrong fix. Wrapped with %w so errors.Is finds it
+// through the connector layer's fmt.Errorf wrapping.
+var ErrMultipleEntries = errors.New("baton-ldap: multiple entries found")
+
+// IsNetworkError reports whether err represents a transport failure rather than
+// an LDAP protocol rejection. go-ldap reports most of these as the pseudo result
+// code ErrorNetwork, but a truncated response comes back as a plain error whose
+// message is the only signal, so both shapes are checked here. Exported so
+// callers that classify errors (see the connector package) reuse this one
+// definition instead of growing a second, divergent one.
+func IsNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
 	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
 		return true
 	}
 
 	// The ldap client library sometimes returns an error with this message when it's actually a network error
-	if strings.HasPrefix(err.Error(), "unable to read LDAP response packet") {
+	if strings.Contains(err.Error(), "unable to read LDAP response packet") {
 		return true
 	}
 
@@ -64,7 +83,7 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 		var cp *puddle.Resource[*ldapConn]
 		cp, err = c.pool.Acquire(ctx)
 		if err != nil {
-			if isNetworkError(err) {
+			if IsNetworkError(err) {
 				l.Warn("baton-ldap: network error acquiring connection. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				if cp != nil {
 					cp.Destroy()
@@ -80,7 +99,7 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 
 		err = f(poolClient)
 		if err != nil {
-			if isNetworkError(err) {
+			if IsNetworkError(err) {
 				l.Warn("baton-ldap: network error. retrying", zap.Error(err), zap.Int("attempts", connectAttempts), zap.Int("maxAttempts", maxConnectAttempts))
 				cp.Destroy()
 				connectAttempts++
@@ -182,10 +201,10 @@ func (c *Client) LdapGet(ctx context.Context,
 		return nil, err
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("entry not found: %s", searchDN.String())
+		return nil, status.Errorf(codes.NotFound, "baton-ldap: no such object")
 	}
 	if len(entries) > 1 {
-		return nil, fmt.Errorf("multiple entries found: %s", searchDN.String())
+		return nil, fmt.Errorf("%w: %s", ErrMultipleEntries, searchDN.String())
 	}
 	return entries[0], nil
 }
@@ -204,7 +223,7 @@ func (c *Client) LdapGetWithStringDN(ctx context.Context,
 		return nil, notFoundError
 	}
 	if len(entries) > 1 {
-		return nil, fmt.Errorf("multiple entries found: %s", searchDN)
+		return nil, fmt.Errorf("%w: %s", ErrMultipleEntries, searchDN)
 	}
 	return entries[0], nil
 }
@@ -226,7 +245,7 @@ func (c *Client) LdapGetRaw(ctx context.Context,
 		return nil, status.Errorf(codes.NotFound, "baton-ldap: no such object")
 	}
 	if len(entries) > 1 {
-		return nil, fmt.Errorf("multiple entries found: %s", dn)
+		return nil, fmt.Errorf("%w: %s", ErrMultipleEntries, dn)
 	}
 	return entries[0], nil
 }
@@ -367,6 +386,34 @@ func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyReque
 	})
 	if err != nil {
 		l.Error("baton-ldap: client failed to modify record", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+// LdapModifyStrict performs a modify WITHOUT the idempotent-error swallowing that
+// LdapModify applies. LdapModify passes isModify=true to getConnection, which masks
+// UnwillingToPerform / NoSuchAttribute / AttributeOrValueExists / EntryAlreadyExists
+// to a nil error — desirable for grant/revoke idempotency, but it hides genuine
+// schema/permission rejections. Callers that must observe the server's real result
+// (e.g. the update_profile action) use this variant and handle any idempotency
+// themselves. Network errors are still retried, and changes are DN-scoped, so a
+// retried modify is safe as long as its changes are idempotent (e.g. Replace).
+func (c *Client) LdapModifyStrict(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("modifying ldap entry (strict)", zap.String("DN", modifyRequest.DN))
+
+	err := c.getConnection(ctx, false, func(client *ldapConn) error {
+		return client.conn.Modify(modifyRequest)
+	})
+	if err != nil {
+		// Debug, not Error: getConnection already logs the raw error, and the
+		// sole caller (the update_profile action) logs a contextual error and
+		// decides severity. Avoids logging an expected, caller-handled rejection
+		// at Error multiple times.
+		l.Debug("baton-ldap: client failed to modify record (strict)", zap.Error(err))
 		return err
 	}
 
