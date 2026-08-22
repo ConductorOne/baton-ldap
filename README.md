@@ -78,17 +78,26 @@ custom LDAP attributes on an existing user.
 
 | Argument | Required | Description |
 |---|---|---|
-| `user_id` | yes | Resource ID reference to the user to update. |
+| `user_id` | yes | Account resource ID reference to the user to update. From a C1 automation this is the C1 account identifier, not the LDAP DN -- see the notes below. |
 | `first_name` | no | The user's first (given) name, mapped to `givenName`. Ignored if empty. |
 | `last_name` | no | The user's last (surname) name, mapped to `sn`. Ignored if empty. |
 | `display_name` | no | The user's display name, mapped to `displayName`. Ignored if empty. |
 | `email` | no | The user's email address, mapped to `mail`. Ignored if empty. |
 | `custom_attributes` | no | Map of arbitrary raw LDAP attribute name → value, for attributes beyond the named fields above. Keys are used verbatim as attribute names. An empty value clears the attribute. |
 
-Returns `success`, `updated_user` (the user resource after the update, best-effort
-re-fetched; absent if the read-back failed, though the write itself still succeeded),
+Returns `success`, `updated_user` (the modified user resource, re-fetched after the
+write; absent if the read-back failed, though the write itself still succeeded),
 `applied` (the number of attributes modified), and `skipped` (named fields or
 `custom_attributes` entries that were not written).
+
+`updated_user` carries the resource identity, `displayName`, and the user trait -- not
+the entry's full attribute set. A value the action just wrote appears there only when it
+also feeds one of those: `display_name` through `displayName`, `email` through the
+trait's email list, and a `custom_attributes` key only when it maps to a trait field
+(`mail`, `displayName`, `sAMAccountName`, `userPrincipalName`, a non-RDN `uid` or `cn`,
+`lastLogonTimestamp`, `authTimestamp`). `first_name`, `last_name`, and every other
+`custom_attributes` key reach the directory but do not appear in `updated_user`. Use
+`applied` to confirm those.
 
 **Notes:**
 - Scope: this action is **resource-scoped to `user`**. Resource-scoping is what makes
@@ -101,9 +110,10 @@ re-fetched; absent if the read-back failed, though the write itself still succee
   rather than silently vanishing.
 - `inetOrgPerson` requirement: of the four named fields, only `last_name` (`sn`) is
   universal -- it's a MUST attribute of the base `person` object class. `first_name`
-  (`givenName`), `display_name` (`displayName`), and `email` (`mail`) are only defined by
-  RFC 2798's `inetOrgPerson` object class; writing one of them to an entry that doesn't
-  carry `inetOrgPerson` fails loudly with LDAP result code 65 ("Object Class Violation").
+  (`givenName`, defined in RFC 4519), `display_name` (`displayName`, RFC 2798), and
+  `email` (`mail`, RFC 4524) are permitted on an entry only by RFC 2798's
+  `inetOrgPerson` object class; writing one of them to an entry that doesn't carry
+  `inetOrgPerson` fails loudly with LDAP result code 65 ("Object Class Violation").
   This is safe -- the failure is atomic, with no partial write and no data corruption --
   but it means those three fields only work against `inetOrgPerson` entries.
 - `custom_attributes` semantics: an entry is written whenever the key is present,
@@ -112,8 +122,10 @@ re-fetched; absent if the read-back failed, though the write itself still succee
   four named arguments above are the only names mapped to a different LDAP attribute
   (`first_name` → `givenName`, and so on). A `custom_attributes` key is used verbatim as
   the attribute name, whatever it looks like: `{"user_id": "x"}` writes an attribute
-  literally named `user_id` (and fails with LDAP result code 17, "Undefined Attribute
-  Type", if your directory has no such attribute) -- it does **not** write `uid`.
+  literally named `user_id` -- it does **not** write `uid`. A name your directory does
+  not define is refused by the server, and the result code depends on the
+  implementation: OpenLDAP returns 17 ("Undefined Attribute Type"), ApacheDS returns 16
+  ("No Such Attribute").
   Likewise `login` and `path`, which are baton profile field names rather than LDAP
   attributes, are attempted as literal attribute names rather than skipped. Only the
   safety checks below still apply to `custom_attributes` entries; none of them changes
@@ -134,8 +146,20 @@ re-fetched; absent if the read-back failed, though the write itself still succee
   discarding the extra values. Clearing (an empty value) a multi-valued attribute is
   unaffected and still removes all values -- that remains an explicit, intentional
   "remove all values" operation.
+- **Value types:** `custom_attributes` carries one string per attribute, so binary
+  attributes (`jpegPhoto`, `userCertificate;binary`) and option-tagged attributes
+  (`;lang-xx`) cannot be set through this action.
 - Only entries within the configured `user-search-dn` (or `base-dn`) may be modified;
   out-of-scope or non-user DNs are rejected as "not found" (fail-closed).
+- **From a C1 automation, `user_id` takes the C1 account identifier, not the LDAP DN.**
+  C1 resolves the account to the connector's resource before dispatching the action. A
+  DN fails inside C1 with `resource <dn> with type user was not found` and never reaches
+  the connector, so it produces no connector log line and leaves the directory
+  untouched.
+- **An attribute push rule must map from a single-valued attribute.** The connector's
+  user profile carries only attributes that hold exactly one value on the entry, so a
+  multi-valued source resolves to nothing: the rule saves and enables, and each push
+  reports zero attributes applied.
 - Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
   to run, and the bind account must have permission to modify the target entry.
 
