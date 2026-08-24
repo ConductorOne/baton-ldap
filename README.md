@@ -160,8 +160,11 @@ trait's email list, and a `custom_attributes` key only when it maps to a trait f
   user profile carries only attributes that hold exactly one value on the entry, so a
   multi-valued source resolves to nothing: the rule saves and enables, and each push
   reports zero attributes applied.
-- Provisioning must be enabled (`--provisioning` / `BATON_PROVISIONING=true`) for actions
-  to run, and the bind account must have permission to modify the target entry.
+- **Actions are not gated by `--provisioning` / `BATON_PROVISIONING`.** That flag gates the
+  provisioning surface -- grant, revoke, account create/delete, credential rotation -- and
+  the SDK registers the action service outside it, so `update_profile` runs and writes with
+  the flag unset. What the action does require is a bind account with permission to modify
+  the target entry.
 
 # Developing baton-ldap
 
