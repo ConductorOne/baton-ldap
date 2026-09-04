@@ -22,7 +22,7 @@ The latest release is available from the [`baton-ldap` Github releases page](htt
 
 Pre-built container images compatible with Docker and other container runtimes are [published to GHCR](https://github.com/ConductorOne/baton-ldap/pkgs/container/baton-ldap):
 ```
-docker pull ghcr.io/conductorone/baton-ldap:latest
+docker pull public.ecr.aws/conductorone/baton-ldap:latest
 ```
 
 Additionally for testing on workstations, `baton-ldap` can be installed from Homebrew:
