@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/conductorone/baton-ldap/pkg/ldap"
@@ -472,14 +473,20 @@ func normalizeAttributeMap(fieldName string, raw map[string]string) (map[string]
 	return out, nil
 }
 
-// attributeList renders attribute names for an operator-facing message,
-// agreeing with the count so a single name does not read as "attributes X are".
-// names must be sorted by the caller.
+// attributeList renders attribute names for an operator-facing message. Each
+// name is quoted, as every other message in this file does, so a name
+// containing a space or a comma cannot make the list ambiguous; the verb agrees
+// with the count so a single name does not read as "attributes X are". names
+// must be sorted by the caller.
 func attributeList(names []string) string {
-	if len(names) == 1 {
-		return fmt.Sprintf("attribute %q is", names[0])
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = strconv.Quote(name)
 	}
-	return fmt.Sprintf("attributes %s are", strings.Join(names, ", "))
+	if len(quoted) == 1 {
+		return fmt.Sprintf("attribute %s is", quoted[0])
+	}
+	return fmt.Sprintf("attributes %s are", strings.Join(quoted, ", "))
 }
 
 // lookupAttributeFold returns the value configured for name in attrs, matching

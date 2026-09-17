@@ -100,7 +100,7 @@ func TestNewUserStatusAttributes(t *testing.T) {
 			name: "every asymmetric attribute is named, in sorted order",
 			yaml: "disable-user-attributes:\n  alpha: \"1\"\n  beta: \"2\"\n" +
 				"enable-user-attributes:\n  gamma: \"3\"\n",
-			wantErr: "alpha, beta, gamma",
+			wantErr: `"alpha", "beta", "gamma"`,
 		},
 		{
 			name:    "empty attribute name is rejected",
@@ -181,7 +181,7 @@ func TestNewUserStatusAttributes(t *testing.T) {
 			// about two mistakes.
 			name:    "every empty disable attribute is named, in sorted order",
 			yaml:    "disable-user-attributes:\n  zeta: \"\"\n  revoke: \"\"\n  alpha: \"\"\n",
-			wantErr: "alpha, revoke, zeta",
+			wantErr: `"alpha", "revoke", "zeta"`,
 		},
 	}
 
