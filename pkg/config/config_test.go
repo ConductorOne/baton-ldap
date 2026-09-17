@@ -129,6 +129,23 @@ func TestNewUserStatusAttributes(t *testing.T) {
 				"enable-user-attributes:\n  revoke: \"\"\n",
 			wantErr: "same value for both directions",
 		},
+		{
+			name: "an empty map is unconfigured, not an error",
+			yaml: "disable-user-attributes: {}\n",
+		},
+		{
+			name: "an empty inline string is unconfigured, not an error",
+			yaml: "disable-user-attributes: \"\"\n",
+		},
+		{
+			// The YAML type trap: an unquoted TRUE is a boolean, and writing it
+			// would produce a lowercase "true" that LDAP's Boolean syntax rejects
+			// -- at action time, against a customer directory. Rejected at startup
+			// instead, with a message that says what to do.
+			name:    "an unquoted boolean value is rejected with a quoting hint",
+			yaml:    "disable-user-attributes:\n  revoke: TRUE\n",
+			wantErr: "quote it",
+		},
 	}
 
 	for _, tc := range tests {
@@ -192,6 +209,62 @@ func TestNewUserStatusAttributesFromEnv(t *testing.T) {
 		// SDK's "baton" prefix plus the - to _ replacer. Asserted so it cannot
 		// drift from SetEnvPrefix.
 		require.Contains(t, err.Error(), "BATON_DISABLE_USER_ATTRIBUTES")
+	})
+
+	// An empty JSON object is valid JSON that configures nothing. It must not
+	// fail the boot: config.New runs before the connector is built, so a false
+	// positive here takes user, group and role sync down with the lifecycle
+	// actions.
+	t.Run("an empty JSON object is unconfigured, not an error", func(t *testing.T) {
+		t.Setenv("BATON_DISABLE_USER_ATTRIBUTES", "{}")
+
+		cfg, err := New(context.Background(), newEnvViper(t))
+		require.NoError(t, err)
+		require.Nil(t, cfg.UserStatusAttributes.Disabled)
+		require.Empty(t, cfg.UserStatusAttributes.ManagedAttributes())
+	})
+}
+
+// TestNewUserStatusAttributesMapShapes covers the non-string shapes directly,
+// since they are what a future viper version could plausibly start returning for
+// a config-file value and the ones the empty-vs-unreadable decision turns on.
+func TestNewUserStatusAttributesMapShapes(t *testing.T) {
+	newViper := func(t *testing.T, value interface{}) *viper.Viper {
+		t.Helper()
+		v := viper.New()
+		v.SetConfigType("yaml")
+		require.NoError(t, v.ReadConfig(strings.NewReader(
+			"url: ldaps://ldap.example.com\n"+
+				"bind-dn: cn=admin,dc=example,dc=org\n"+
+				"base-dn: dc=example,dc=org\n")))
+		if value != nil {
+			v.Set(disableUserAttributesField.FieldName, value)
+		}
+		return v
+	}
+
+	t.Run("a zero-length typed map is unconfigured", func(t *testing.T) {
+		cfg, err := New(context.Background(), newViper(t, map[string]string{}))
+		require.NoError(t, err)
+		require.Nil(t, cfg.UserStatusAttributes.Disabled)
+	})
+
+	t.Run("a zero-length interface map is unconfigured", func(t *testing.T) {
+		cfg, err := New(context.Background(), newViper(t, map[string]interface{}{}))
+		require.NoError(t, err)
+		require.Nil(t, cfg.UserStatusAttributes.Disabled)
+	})
+
+	t.Run("a flag-style string map is configured", func(t *testing.T) {
+		cfg, err := New(context.Background(), newViper(t, map[string]string{"revoke": "Y"}))
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"revoke": "Y"}, cfg.UserStatusAttributes.Disabled)
+	})
+
+	t.Run("a non-map value is an error naming the type", func(t *testing.T) {
+		_, err := New(context.Background(), newViper(t, 42))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "got int")
 	})
 }
 

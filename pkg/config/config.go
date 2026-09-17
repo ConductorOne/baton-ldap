@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -35,17 +36,17 @@ var (
 	disableOperationalAttrsField = field.BoolField("disable-operational-attrs", field.WithDescription("Disable fetching operational attributes. Some LDAP servers don't support these. If disabled, created_at and last login info will not be fetched"))
 	insecureSkipVerifyField      = field.BoolField("insecure-skip-verify", field.WithDescription("If connecting over TLS, skip verifying the server certificate"))
 
-	// The enable/disable definition is deliberately not defaulted: baking a
-	// revoke=Y/N mapping in would make every other tenant write an attribute
-	// their directory may not even define. The suggested values only pre-fill
-	// the values in the C1 configuration UI; they are never applied at runtime.
+	// The enable/disable definition is deliberately not defaulted, and
+	// deliberately not suggested either: revoke=Y/N is one customer's marker, and
+	// a value pre-filled into the configuration UI is accepted as-is by every
+	// other tenant, registering lifecycle actions against an attribute their
+	// directory does not define. The example lives in the description and the
+	// README instead, where it informs without configuring anything.
 	disableUserAttributesField = field.StringMapField("disable-user-attributes",
-		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as disabled, for example \"revoke: Y\". Unset by default."),
-		field.WithSuggestedValue(map[string]any{"revoke": "Y"}))
+		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as disabled, for example \"revoke: Y\". Unset by default."))
 	enableUserAttributesField = field.StringMapField("enable-user-attributes",
 		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as enabled, for example \"revoke: N\". "+
-			"Unset by default. When both directions are configured they must name the same attributes."),
-		field.WithSuggestedValue(map[string]any{"revoke": "N"}))
+			"Unset by default. When both directions are configured they must name the same attributes."))
 )
 
 var (
@@ -206,9 +207,10 @@ type UserStatusAttributes struct {
 }
 
 // ManagedAttributes returns the sorted, case-insensitively deduplicated union
-// of the attribute names configured in either direction. The read path
-// consults this union; reading never modifies anything, so the union carries no
-// write hazard.
+// of the attribute names configured in either direction. It is what the status
+// read walks (so a value typo in one entry is still reported when another entry
+// decided the status) and what the startup log prints; it deliberately does not
+// drive the write path, which applies only the invoked direction's own keys.
 func (a UserStatusAttributes) ManagedAttributes() []string {
 	seen := make(map[string]bool, len(a.Disabled)+len(a.Enabled))
 	var out []string
@@ -305,49 +307,87 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 // readAttributeMapField reads one attribute-map configuration field and hands
 // it to normalizeAttributeMap.
 //
-// It exists because v.GetStringMapString goes through cast.ToStringMapString,
-// which discards its parse error: a value it cannot parse as a map yields an
-// empty map and a nil error. That is not merely a missing value -- it makes
-// every downstream check pass trivially (nothing is configured, so nothing is
-// invalid) and leaves the corresponding action unregistered, so the connector
-// starts cleanly and silently does nothing. The one configuration path that
-// cannot parse is an env var, and it is the path most likely to be used:
-// BATON_DISABLE_USER_ATTRIBUTES='revoke=Y' is empty, while the JSON form
-// BATON_DISABLE_USER_ATTRIBUTES='{"revoke":"Y"}' works. CLI flags and a nested
-// YAML map also work; only a flat key=value string does not.
+// It deliberately does not use v.GetStringMapString. That goes through
+// cast.ToStringMapString, which discards its parse error and accepts only five
+// concrete types: a call of it against a value it does not recognize returns an
+// empty map and a nil error, which is indistinguishable from "not configured".
+// Everything downstream then passes trivially -- nothing configured is nothing
+// invalid -- and the corresponding action is silently never registered, so the
+// connector starts cleanly and does nothing.
 //
-// So a value that is present but parses to nothing is an error, except for the
-// genuinely empty forms (unset, "", or an empty map), which stay unconfigured.
+// Switching on the raw value instead makes each case explicit:
+//
+//   - nil       -> unconfigured.
+//   - string    -> the env-var / inline-string form; parsed as JSON by
+//     readAttributeMapString.
+//   - map       -> the config-file (map[string]interface{}) and repeated-CLI-flag
+//     (map[string]string) forms. Empty means unconfigured.
+//   - anything else, and a non-string map value, is an error rather than a
+//     guess.
+//
+// Rejecting a non-string map value is what catches the YAML type trap: an
+// unquoted TRUE reads as a bool, and writing it would produce a lowercase
+// "true", which LDAP's Boolean syntax (RFC 4517) rejects -- at action time, on a
+// lifecycle call, in a customer directory. Refusing it at startup, naming the
+// attribute and asking for quotes, is both earlier and clearer.
+//
+// Empty forms must be recognized explicitly rather than inferred, because
+// getting it wrong here is not a degraded feature but a failed boot: config.New
+// runs before the connector is built, so it takes user, group and role sync down
+// with the lifecycle actions.
 func readAttributeMapField(v *viper.Viper, name string) (map[string]string, error) {
-	parsed := v.GetStringMapString(name)
-	if len(parsed) > 0 {
-		return normalizeAttributeMap(name, parsed)
-	}
-
 	switch raw := v.Get(name).(type) {
 	case nil:
 		return nil, nil
 	case string:
-		if strings.TrimSpace(raw) == "" {
-			return nil, nil
-		}
-		// Name the env var exactly as the SDK binds it: the "baton" prefix plus
-		// the - to _ replacer. Pointing at an unprefixed name would send an
-		// operator who copies it straight back into the silent no-op this
-		// message exists to eliminate.
-		envName := "BATON_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-		return nil, fmt.Errorf(
-			"%s: %q is not a valid attribute map; use a YAML map, repeated --%s key=value flags, or a JSON object. "+
-				"An environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}'",
-			name, raw, name, envName)
+		return readAttributeMapString(name, raw)
+	case map[string]string:
+		return normalizeAttributeMap(name, raw)
 	case map[string]interface{}:
-		if len(raw) == 0 {
-			return nil, nil
+		out := make(map[string]string, len(raw))
+		for key, value := range raw {
+			str, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf(
+					"%s: attribute %q has a %T value (%v); quote it, so it is read as the LDAP value you intend "+
+						"(an unquoted TRUE/FALSE is a YAML boolean and would be written in a form the directory rejects)",
+					name, key, value, value)
+			}
+			out[key] = str
 		}
-		return nil, fmt.Errorf("%s: attribute map was present but could not be read", name)
+		return normalizeAttributeMap(name, out)
 	default:
 		return nil, fmt.Errorf("%s: expected a map of attribute name to value, got %T", name, raw)
 	}
+}
+
+// readAttributeMapString parses the string form of an attribute map -- what an
+// environment variable, or an inline YAML string, arrives as.
+//
+// The parse is done here rather than trusted from cast because cast discards its
+// error: an unparseable string and a valid but empty JSON object both come back
+// as an empty map, and only the raw string distinguishes them. An empty object
+// is unconfigured; anything that is not a JSON object at all is an error.
+func readAttributeMapString(name, raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		// "{}" lands here and normalizeAttributeMap maps it to unconfigured.
+		return normalizeAttributeMap(name, parsed)
+	}
+
+	// Name the env var exactly as the SDK binds it: the "baton" prefix plus the
+	// - to _ replacer. Pointing at an unprefixed name would send an operator who
+	// copies it straight back into the silent no-op this error exists to
+	// eliminate.
+	envName := "BATON_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	return nil, fmt.Errorf(
+		"%s: %q is not a valid attribute map; expected a JSON object of attribute name to string value, a YAML map, "+
+			"or repeated --%s key=value flags (an environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}')",
+		name, raw, name, envName)
 }
 
 // normalizeAttributeMap trims attribute names, rejects the names that can never
