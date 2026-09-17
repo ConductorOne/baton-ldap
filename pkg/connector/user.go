@@ -94,7 +94,7 @@ func parseUserNames(user *ldap.Entry) (string, string, string) {
 func parseUserStatus(user *ldap.Entry, statusAttributes config.UserStatusAttributes) (v2.Status_ResourceStatus, []string, error) {
 	status, unmatched := configuredUserStatus(user, statusAttributes)
 	if status != v2.Status_RESOURCE_STATUS_UNSPECIFIED {
-		return status, nil, nil
+		return status, unmatched, nil
 	}
 	status, err := fallbackUserStatus(user)
 	if err != nil {
@@ -121,37 +121,41 @@ func parseUserStatus(user *ldap.Entry, statusAttributes config.UserStatusAttribu
 // attribute read order-dependently.
 func configuredUserStatus(user *ldap.Entry, statusAttributes config.UserStatusAttributes) (v2.Status_ResourceStatus, []string) {
 	var unmatched []string
-	seenUnmatched := map[string]bool{}
-	record := func(attr string) {
-		if !seenUnmatched[attr] {
-			seenUnmatched[attr] = true
-			unmatched = append(unmatched, attr)
-		}
-	}
+	anyDisabled := false
+	anyEnabled := false
 
-	for attr, disabledValue := range statusAttributes.Disabled {
+	// A single pass over the managed attributes, classifying each one, rather
+	// than a disabled loop that returns early. Two properties depend on it:
+	// the verdict cannot depend on iteration order (any disabled match
+	// anywhere beats any enabled match), and an attribute holding an
+	// unrecognized value is reported even when another attribute already
+	// decided the status -- otherwise a typo in one entry of a multi-attribute
+	// definition is invisible exactly when the definition is large enough to
+	// need the report.
+	for _, attr := range statusAttributes.ManagedAttributes() {
 		values := user.GetEqualFoldAttributeValues(attr)
 		if len(values) == 0 {
 			continue
 		}
-		if anyAttrValueMatches(values, disabledValue) {
-			return v2.Status_RESOURCE_STATUS_DISABLED, nil
-		}
-		record(attr)
-	}
-
-	for attr, enabledValue := range statusAttributes.Enabled {
-		values := user.GetEqualFoldAttributeValues(attr)
-		if len(values) == 0 {
+		if disabledValue, ok := statusAttributes.DisabledValue(attr); ok && anyAttrValueMatches(values, disabledValue) {
+			anyDisabled = true
 			continue
 		}
-		if anyAttrValueMatches(values, enabledValue) {
-			return v2.Status_RESOURCE_STATUS_ENABLED, nil
+		if enabledValue, ok := statusAttributes.EnabledValue(attr); ok && anyAttrValueMatches(values, enabledValue) {
+			anyEnabled = true
+			continue
 		}
-		record(attr)
+		unmatched = append(unmatched, attr)
 	}
 
-	return v2.Status_RESOURCE_STATUS_UNSPECIFIED, unmatched
+	switch {
+	case anyDisabled:
+		return v2.Status_RESOURCE_STATUS_DISABLED, unmatched
+	case anyEnabled:
+		return v2.Status_RESOURCE_STATUS_ENABLED, unmatched
+	default:
+		return v2.Status_RESOURCE_STATUS_UNSPECIFIED, unmatched
+	}
 }
 
 // fallbackUserStatus is the connector's built-in status rule, used only when

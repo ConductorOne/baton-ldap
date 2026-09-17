@@ -79,6 +79,15 @@ enable-user-attributes:
   before. When only one direction is configured, only that action is registered on the connector.
 - Attribute names are LDAP attribute names and are case-insensitive; names read from a config file
   are lowercased by the configuration library, which does not change the attribute written.
+- **Quote the values.** An unquoted `TRUE` or `FALSE` (`revoke: TRUE`) is read as a YAML boolean and
+  written in lowercase, which LDAP's Boolean syntax (RFC 4517) rejects -- the modify fails with an
+  invalid-syntax error rather than setting the attribute. `Y` and `N` are not YAML booleans and are
+  safe unquoted, but quoting every value avoids the trap entirely.
+- **As an environment variable, the value must be JSON.** A nested YAML map and repeated
+  `--disable-user-attributes key=value` flags both work, but an environment variable arrives as a
+  string: `BATON_DISABLE_USER_ATTRIBUTES='{"revoke":"Y"}'` is accepted, while
+  `BATON_DISABLE_USER_ATTRIBUTES='revoke=Y'` is rejected at startup instead of silently configuring
+  nothing.
 
 ## --create-account
 

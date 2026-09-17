@@ -225,6 +225,19 @@ func (a UserStatusAttributes) ManagedAttributes() []string {
 	return out
 }
 
+// DisabledValue returns the value configured to mark attr as disabled, matching
+// the attribute name case-insensitively (LDAP attribute names are). It reports
+// false when attr is not configured in that direction, which is expected for a
+// disable-only or enable-only definition.
+func (a UserStatusAttributes) DisabledValue(attr string) (string, bool) {
+	return lookupAttributeFold(a.Disabled, attr)
+}
+
+// EnabledValue is DisabledValue for the enabled direction.
+func (a UserStatusAttributes) EnabledValue(attr string) (string, bool) {
+	return lookupAttributeFold(a.Enabled, attr)
+}
+
 // ldapObjectClassAttr is the one attribute name that can never carry the
 // enable/disable marker.
 const ldapObjectClassAttr = "objectClass"
@@ -241,11 +254,11 @@ const ldapObjectClassAttr = "objectClass"
 // same attribute names whenever both directions are configured makes the two
 // agree. "Clear on enable" stays expressible as an explicit empty value.
 func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error) {
-	disabled, err := normalizeAttributeMap(disableUserAttributesField.FieldName, v.GetStringMapString(disableUserAttributesField.FieldName))
+	disabled, err := readAttributeMapField(v, disableUserAttributesField.FieldName)
 	if err != nil {
 		return UserStatusAttributes{}, err
 	}
-	enabled, err := normalizeAttributeMap(enableUserAttributesField.FieldName, v.GetStringMapString(enableUserAttributesField.FieldName))
+	enabled, err := readAttributeMapField(v, enableUserAttributesField.FieldName)
 	if err != nil {
 		return UserStatusAttributes{}, err
 	}
@@ -280,6 +293,47 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 	}
 
 	return UserStatusAttributes{Disabled: disabled, Enabled: enabled}, nil
+}
+
+// readAttributeMapField reads one attribute-map configuration field and hands
+// it to normalizeAttributeMap.
+//
+// It exists because v.GetStringMapString goes through cast.ToStringMapString,
+// which discards its parse error: a value it cannot parse as a map yields an
+// empty map and a nil error. That is not merely a missing value -- it makes
+// every downstream check pass trivially (nothing is configured, so nothing is
+// invalid) and leaves the corresponding action unregistered, so the connector
+// starts cleanly and silently does nothing. The one configuration path that
+// cannot parse is an env var, and it is the path most likely to be used:
+// BATON_DISABLE_USER_ATTRIBUTES='revoke=Y' is empty, while the JSON form
+// BATON_DISABLE_USER_ATTRIBUTES='{"revoke":"Y"}' works. CLI flags and a nested
+// YAML map also work; only a flat key=value string does not.
+//
+// So a value that is present but parses to nothing is an error, except for the
+// genuinely empty forms (unset, "", or an empty map), which stay unconfigured.
+func readAttributeMapField(v *viper.Viper, name string) (map[string]string, error) {
+	parsed := v.GetStringMapString(name)
+	if len(parsed) > 0 {
+		return normalizeAttributeMap(name, parsed)
+	}
+
+	switch raw := v.Get(name).(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if strings.TrimSpace(raw) == "" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s: %q is not a valid attribute map; use a YAML map, repeated --%s key=value flags, or a JSON object. An environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}'",
+			name, raw, name, strings.ToUpper(strings.ReplaceAll(name, "-", "_")))
+	case map[string]interface{}:
+		if len(raw) == 0 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%s: attribute map was present but could not be read", name)
+	default:
+		return nil, fmt.Errorf("%s: expected a map of attribute name to value, got %T", name, raw)
+	}
 }
 
 // normalizeAttributeMap trims attribute names, rejects the names that can never

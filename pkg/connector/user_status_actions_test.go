@@ -158,6 +158,13 @@ func TestParseUserStatusConfiguredAttributes(t *testing.T) {
 			wantUnmatched: []string{"revoke"},
 		},
 		{
+			name:          "an unmatched attribute is still reported when another attribute decides the status",
+			definition:    symmetricStatusDefinition(),
+			attributes:    map[string][]string{"revoke": {"Y"}, "employeeType": {"Engineering"}},
+			want:          v2.Status_RESOURCE_STATUS_DISABLED,
+			wantUnmatched: []string{"employeeType"},
+		},
+		{
 			name:          "a present-but-unmatched value with no fallback rule stays unspecified",
 			definition:    symmetricStatusDefinition(),
 			attributes:    map[string][]string{"revoke": {"maybe"}},

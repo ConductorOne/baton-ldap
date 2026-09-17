@@ -71,6 +71,8 @@ Both maps are unset by default. When configured:
 - The same attribute cannot be given the same value in both directions; attribute names must not be empty; and `objectClass` and password attributes cannot be used as the marker.
 - Each action returns `success`, `status` (`"enabled"` / `"disabled"`), `applied` (the number of attributes changed; `0` means the account was already in the requested state), `skipped`, and `updated_user` (a best-effort re-fetch of the user resource after the write). The connector re-reads the entry and verifies the configured attributes now hold their configured values — or are absent, for a configured clear — before reporting success.
 - Unlike `update_profile`, these actions are **global**, not resource-scoped. `user_id` still takes the C1 account identifier rather than the LDAP DN, for the same reason.
+- **Quote the values.** An unquoted `TRUE`/`FALSE` is read as a YAML boolean and written in lowercase, which LDAP's Boolean syntax (RFC 4517) rejects. `Y` and `N` are not YAML booleans and are safe unquoted, but quoting every value avoids the trap.
+- **As an environment variable the value must be JSON**: `BATON_DISABLE_USER_ATTRIBUTES='{"revoke":"Y"}'` works, `BATON_DISABLE_USER_ATTRIBUTES='revoke=Y'` is rejected at startup rather than silently configuring nothing. A nested YAML map and repeated `--disable-user-attributes key=value` flags both work as written.
 
 <Note>
   With a "clear on enable" definition (`revoke: "Y"` / `revoke: ""`) the enabled state is reached by *fall-through* rather than by matching a positive value: no configured attribute matches its disabled value, so the built-in rules apply and an unspecified status defaults to enabled. "Enabled" therefore means "the disabled marker is absent".

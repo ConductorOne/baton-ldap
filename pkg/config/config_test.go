@@ -147,6 +147,50 @@ func TestNewUserStatusAttributes(t *testing.T) {
 	}
 }
 
+// TestNewUserStatusAttributesFromEnv covers the environment-variable path, which
+// behaves differently from the other two. A nested YAML map and repeated CLI
+// flags both reach viper as a map, but an env var arrives as a plain string and
+// only parses as a map when it is JSON: cast.ToStringMapString discards its
+// parse error, so BATON_DISABLE_USER_ATTRIBUTES='revoke=Y' -- the natural guess,
+// and documented next to the CLI example in the README -- used to yield an empty
+// map with no error. Everything downstream then passed trivially (nothing
+// configured, so nothing invalid) and the action was simply never registered:
+// a connector that starts cleanly and silently does nothing.
+func TestNewUserStatusAttributesFromEnv(t *testing.T) {
+	newEnvViper := func(t *testing.T) *viper.Viper {
+		t.Helper()
+		v := viper.New()
+		v.SetConfigType("yaml")
+		require.NoError(t, v.ReadConfig(strings.NewReader(
+			"url: ldaps://ldap.example.com\n"+
+				"bind-dn: cn=admin,dc=example,dc=org\n"+
+				"base-dn: dc=example,dc=org\n")))
+		// The binding the SDK installs (baton prefix, - to _ replacer).
+		v.SetEnvPrefix("baton")
+		v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+		v.AutomaticEnv()
+		return v
+	}
+
+	t.Run("a JSON env var is accepted", func(t *testing.T) {
+		t.Setenv("BATON_DISABLE_USER_ATTRIBUTES", `{"revoke":"Y"}`)
+		t.Setenv("BATON_ENABLE_USER_ATTRIBUTES", `{"revoke":"N"}`)
+
+		cfg, err := New(context.Background(), newEnvViper(t))
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{"revoke": "Y"}, cfg.UserStatusAttributes.Disabled)
+		require.Equal(t, map[string]string{"revoke": "N"}, cfg.UserStatusAttributes.Enabled)
+	})
+
+	t.Run("a flat key=value env var is rejected instead of silently empty", func(t *testing.T) {
+		t.Setenv("BATON_DISABLE_USER_ATTRIBUTES", "revoke=Y")
+
+		_, err := New(context.Background(), newEnvViper(t))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a valid attribute map")
+	})
+}
+
 // TestNewUserStatusAttributesDuplicateNames covers two attribute names folding
 // to the same LDAP attribute within one map. viper lowercases nested map keys
 // when it reads a config file, so this shape only reaches New() through a
