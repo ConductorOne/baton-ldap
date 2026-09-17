@@ -333,8 +333,12 @@ func TestUserStatusActionSchemas(t *testing.T) {
 			require.NotNil(t, returnTypes["success"].GetBoolField())
 			require.NotNil(t, returnTypes["status"].GetStringField())
 			require.NotNil(t, returnTypes["applied"].GetIntField())
-			require.NotNil(t, returnTypes["skipped"].GetStringSliceField())
 			require.NotNil(t, returnTypes["updated_user"].GetResourceField())
+			// No skipped field: a configured attribute that cannot be written
+			// fails the action rather than being reported, so it could never hold
+			// anything on a successful call.
+			require.NotContains(t, returnTypes, "skipped")
+			require.Len(t, returnTypes, 4)
 
 			// Regression guard: the schema must be freshly built per call --
 			// registration mutates it in place (ResourceTypeId), so a shared
@@ -466,7 +470,6 @@ func TestUserStatusActions(t *testing.T) {
 		require.True(t, rv.GetFields()["success"].GetBoolValue())
 		require.Equal(t, statusNameDisabled, rv.GetFields()["status"].GetStringValue())
 		require.Equal(t, float64(1), rv.GetFields()["applied"].GetNumberValue())
-		require.Empty(t, rv.GetFields()["skipped"].GetListValue().GetValues())
 		require.Equal(t, []string{"Disabled"}, valuesOf(t, userDN, attrStatusFlag))
 
 		// The second disable call lands on an already-disabled account: a
@@ -475,7 +478,6 @@ func TestUserStatusActions(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, statusNameDisabled, rv.GetFields()["status"].GetStringValue())
 		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue(), "the account is already disabled")
-		require.Empty(t, rv.GetFields()["skipped"].GetListValue().GetValues(), "an already-satisfied attribute is not a skip")
 
 		rv, _, err = l.enableUser(ctx, mkStatusArgs(t, userDN, "user"))
 		require.NoError(t, err)
@@ -499,7 +501,40 @@ func TestUserStatusActions(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, rv.GetFields()["success"].GetBoolValue())
 		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
-		require.Empty(t, rv.GetFields()["skipped"].GetListValue().GetValues(), "an already-satisfied attribute is not a skip")
+	})
+
+	// A multi-valued marker attribute is the case the pre-check exists for.
+	// buildUserAttrChanges refuses to collapse a multi-valued attribute onto one
+	// value, and it refuses before its own already-satisfied check -- so without
+	// a pre-check, an account the read path calls disabled (any value matching
+	// counts) would fail disable_user on every retry.
+	setAttribute := func(t *testing.T, values ...string) {
+		t.Helper()
+		req := ldap3.NewModifyRequest(userDN, nil)
+		req.Replace(attrStatusFlag, values)
+		require.NoError(t, l.client.LdapModifyStrict(ctx, req))
+	}
+
+	t.Run("a multi-valued marker already holding the requested value is in state", func(t *testing.T) {
+		setDefinition(map[string]string{attrStatusFlag: "Disabled"}, map[string]string{attrStatusFlag: "Enabled"})
+		setAttribute(t, "Disabled", "Contractor")
+		t.Cleanup(func() { setAttribute(t, "Enabled") })
+
+		rv, _, err := l.disableUser(ctx, mkStatusArgs(t, userDN, "user"))
+		require.NoError(t, err, "the read path calls this account disabled, so the action must agree")
+		require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
+		require.Equal(t, []string{"Disabled", "Contractor"}, valuesOf(t, userDN, attrStatusFlag),
+			"the other values are left alone")
+	})
+
+	t.Run("a multi-valued marker not holding the requested value is refused", func(t *testing.T) {
+		setDefinition(map[string]string{attrStatusFlag: "Terminated"}, nil)
+		setAttribute(t, "Disabled", "Contractor")
+		t.Cleanup(func() { setAttribute(t, "Enabled") })
+
+		_, _, err := l.disableUser(ctx, mkStatusArgs(t, userDN, "user"))
+		require.Error(t, err, "collapsing it onto one value would silently discard the others")
+		require.Equal(t, []string{"Disabled", "Contractor"}, valuesOf(t, userDN, attrStatusFlag))
 	})
 
 	t.Run("every configured attribute is written", func(t *testing.T) {

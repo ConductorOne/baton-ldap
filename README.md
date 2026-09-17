@@ -221,8 +221,8 @@ Marks a user account as enabled by writing the attributes configured in
 | `user_id` | yes | Account resource ID reference to the user to enable. From a C1 automation this is the C1 account identifier, not the LDAP DN -- see the notes under `update_profile`. |
 
 Returns `success`, `status` (`"enabled"`), `applied` (the number of attributes modified; `0` means
-the account was already enabled), `skipped`, and `updated_user` (the user resource re-fetched after
-the write; absent if the read-back failed, though the write itself still succeeded).
+the account was already enabled), and `updated_user` (the user resource re-fetched after the write;
+absent if the resource could not be encoded, though the write itself still succeeded).
 
 **Notes:**
 - **Only the attributes named in `--enable-user-attributes` are written.** An attribute that only
@@ -234,11 +234,16 @@ the write; absent if the read-back failed, though the write itself still succeed
   disabled value, so the connector uses its built-in rules, which default an unspecified status to
   enabled. "Enabled" here means "the disabled marker is not present", not "a positive value was
   written".
-- Idempotent: an account already in the requested state succeeds with `applied: 0`, and `skipped`
-  stays empty -- an already-satisfied attribute is not a skip.
+- Idempotent: an account already in the requested state succeeds with `applied: 0`. That check runs
+  **before** the modify, so it also covers a marker attribute that is multi-valued -- an entry whose
+  attribute already holds the requested value among several is reported as already in state rather
+  than failing, which is what the synced status says about it too. (Modifying such an attribute to a
+  value it does not already hold is still refused: replacing it with a single value would silently
+  discard the others.)
 - If a configured attribute cannot be written (it is the entry's RDN attribute, for example) the
   action fails with `FailedPrecondition` naming the attribute, on the first call and on every retry
-  alike.
+  alike. That is an error rather than returned data, which is why there is no `skipped` field: it
+  could never hold anything on a successful call.
 - After writing, the connector re-reads the entry and verifies that the targeted attributes now hold
   their configured values (case-insensitive, whitespace-trimmed, any value of a multi-valued
   attribute) or are absent when they were cleared. A mismatch fails the action instead of reporting
@@ -257,7 +262,7 @@ Marks a user account as disabled by writing the attributes configured in
 | `user_id` | yes | Account resource ID reference to the user to disable. From a C1 automation this is the C1 account identifier, not the LDAP DN -- see the notes under `update_profile`. |
 
 Returns `success`, `status` (`"disabled"`), `applied` (the number of attributes modified; `0` means
-the account was already disabled), `skipped`, and `updated_user`.
+the account was already disabled), and `updated_user`.
 
 **Notes:** every note above applies unchanged -- only `--disable-user-attributes`'s attributes are
 written, the action is idempotent, an unwritable configured attribute fails the action on the first

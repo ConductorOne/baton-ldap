@@ -71,12 +71,6 @@ func userStatusActionSchema(name, displayName, description string, actionType v2
 				Field:       &config_sdk.Field_IntField{IntField: &config_sdk.IntField{}},
 			},
 			{
-				Name:        "skipped",
-				DisplayName: "Skipped",
-				Description: "Configured attributes this action could not write. Non-empty is an error condition, never a partial success.",
-				Field:       &config_sdk.Field_StringSliceField{StringSliceField: &config_sdk.StringSliceField{}},
-			},
-			{
 				Name:        "updated_user",
 				DisplayName: "Updated User",
 				Description: "The user resource after the change, best-effort re-fetched. Absent if the read-back failed (the write itself still succeeded in that case).",
@@ -185,7 +179,40 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 			actionName, statusAttributeConfigField(disable))
 	}
 
-	result, err := applyUserAttrUpdate(ctx, l.client, l.config.UserSearchDN, actionName, userRef.GetResource(), attrs, mask)
+	// Resolve and scope the target before anything reads the directory.
+	// applyUserAttrUpdate repeats both, but the already-in-state check below
+	// reads the entry, and that read must not be the first thing to touch a DN
+	// outside the configured scope.
+	targetDN, err := ldap.CanonicalizeDN(userRef.GetResource())
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument,
+			"ldap-connector: %s: invalid user_id %q: %v", actionName, userRef.GetResource(), err)
+	}
+	if err := assertDNInScope(targetDN, l.config.UserSearchDN); err != nil {
+		return nil, nil, status.Errorf(codes.NotFound, "ldap-connector: %s: user not found", actionName)
+	}
+
+	entry, err := getAccount(ctx, l.client, targetDN.String())
+	if err != nil {
+		return nil, nil, status.Errorf(lookupErrToGRPC(err),
+			"ldap-connector: %s: failed to fetch user %q: %v", actionName, targetDN.String(), err)
+	}
+
+	// Already in the requested state? Checked explicitly rather than left to
+	// buildUserAttrChanges' diff, because that diff hard-errors on a
+	// multi-valued attribute *before* it reaches its own already-satisfied
+	// check: a marker attribute holding the requested value among several would
+	// be reported as being in that state by the read path and then fail here,
+	// blaming the caller for a directory-state condition -- on every retry,
+	// which is precisely the shape a ConductorOne-retried lifecycle action must
+	// not have. The predicate is the same one the post-write verification uses,
+	// so "in state" means the same thing before and after.
+	if assertStatusAttrsWritten(entry, attrs, mask) == nil {
+		log.Debug(actionName+": account is already in the requested state", zap.String("dn", entry.DN))
+		return l.userStatusResult(ctx, log, entry, statusName, 0)
+	}
+
+	result, err := applyUserAttrUpdate(ctx, l.client, l.config.UserSearchDN, actionName, targetDN.String(), attrs, mask)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -196,7 +223,9 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 	// configuration and the entry, never of the already-satisfied paths, so it
 	// must fail on the first call exactly as it fails on every retry.
 	// Conditioning it on Applied would let the action succeed once and then
-	// fail forever -- precisely the wrong shape for an action C1 retries.
+	// fail forever -- precisely the wrong shape for an action C1 retries. This
+	// is an error rather than returned data, which is why the schema has no
+	// skipped field: it can never hold anything on a successful call.
 	if len(result.Skipped) > 0 {
 		log.Warn(actionName+": configured attributes could not be written",
 			zap.String("dn", result.DN), zap.Strings("skipped", result.Skipped))
@@ -207,26 +236,39 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 
 	// Verify what was actually written rather than recomputing the status enum:
 	// a configured clear leaves the attribute absent, so the enum would fall
-	// through to UNSPECIFIED and fail a perfectly correct write.
-	if err := verifyUserStatusAttrs(ctx, l.client, result.DN, attrs, mask, actionName); err != nil {
+	// through to UNSPECIFIED and fail a perfectly correct write. The entry this
+	// reads is the post-write state, so it is also what updated_user is encoded
+	// from -- one read serves both.
+	verified, err := verifyUserStatusAttrs(ctx, l.client, result.DN, attrs, mask, actionName)
+	if err != nil {
 		return nil, nil, err
 	}
 
+	return l.userStatusResult(ctx, log, verified, statusName, result.Applied)
+}
+
+// userStatusResult builds a successful lifecycle action's return value from an
+// entry already known to be in the requested state.
+//
+// updated_user is encoded best-effort: the write has landed by the time this
+// runs, so a resource-encoding problem must not turn a successful modify into a
+// reported failure.
+func (l *LDAP) userStatusResult(
+	ctx context.Context,
+	log *zap.Logger,
+	entry *ldap.Entry,
+	statusName string,
+	applied int,
+) (*structpb.Struct, annotations.Annotations, error) {
 	fields := []actions.ReturnField{
 		actions.NewStringReturnField("status", statusName),
-		actions.NewNumberReturnField("applied", float64(result.Applied)),
-		actions.NewStringListReturnField("skipped", result.Skipped),
+		actions.NewNumberReturnField("applied", float64(applied)),
 	}
 
-	// Best-effort read-back: the write already landed, so a read-back or
-	// resource-encoding problem must not turn a successful modify into a
-	// reported failure.
-	if entry, rerr := getAccount(ctx, l.client, result.DN); rerr != nil {
-		log.Warn(actionName+": read-back failed", zap.String("dn", result.DN), zap.Error(rerr))
-	} else if updatedRes, rerr := userResource(ctx, entry, l.config.UserStatusAttributes); rerr != nil {
-		log.Warn(actionName+": encoding updated user resource failed", zap.String("dn", result.DN), zap.Error(rerr))
-	} else if rf, ferr := actions.NewResourceReturnField("updated_user", updatedRes); ferr != nil {
-		log.Warn(actionName+": encoding updated_user return field failed", zap.String("dn", result.DN), zap.Error(ferr))
+	if updatedRes, err := userResource(ctx, entry, l.config.UserStatusAttributes); err != nil {
+		log.Warn("ldap: encoding updated user resource failed", zap.String("dn", entry.DN), zap.Error(err))
+	} else if rf, err := actions.NewResourceReturnField("updated_user", updatedRes); err != nil {
+		log.Warn("ldap: encoding updated_user return field failed", zap.String("dn", entry.DN), zap.Error(err))
 	} else {
 		fields = append(fields, rf)
 	}
@@ -239,15 +281,18 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 // value is empty (an explicit clear). A mismatch is FailedPrecondition: the
 // write reported success but the directory does not reflect it, and retrying
 // the identical action will not change that.
-func verifyUserStatusAttrs(ctx context.Context, client *ldap.Client, dn string, attrs map[string]string, mask []string, actionName string) error {
+//
+// It returns the entry it verified so the caller can encode updated_user from
+// it rather than issuing the same read a second time.
+func verifyUserStatusAttrs(ctx context.Context, client *ldap.Client, dn string, attrs map[string]string, mask []string, actionName string) (*ldap.Entry, error) {
 	entry, err := getAccount(ctx, client, dn)
 	if err != nil {
-		return status.Errorf(lookupErrToGRPC(err), "ldap-connector: %s: failed to verify user %q: %v", actionName, dn, err)
+		return nil, status.Errorf(lookupErrToGRPC(err), "ldap-connector: %s: failed to verify user %q: %v", actionName, dn, err)
 	}
 	if err := assertStatusAttrsWritten(entry, attrs, mask); err != nil {
-		return status.Errorf(codes.FailedPrecondition, "ldap-connector: %s: %v", actionName, err)
+		return nil, status.Errorf(codes.FailedPrecondition, "ldap-connector: %s: %v", actionName, err)
 	}
-	return nil
+	return entry, nil
 }
 
 // assertStatusAttrsWritten is the pure half of the read-back verification: it
