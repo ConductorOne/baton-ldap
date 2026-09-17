@@ -43,7 +43,8 @@ var (
 		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as disabled, for example \"revoke: Y\". Unset by default."),
 		field.WithSuggestedValue(map[string]any{"revoke": "Y"}))
 	enableUserAttributesField = field.StringMapField("enable-user-attributes",
-		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as enabled, for example \"revoke: N\". Unset by default. When both directions are configured they must name the same attributes."),
+		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as enabled, for example \"revoke: N\". "+
+			"Unset by default. When both directions are configured they must name the same attributes."),
 		field.WithSuggestedValue(map[string]any{"revoke": "N"}))
 )
 
@@ -272,7 +273,10 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 		// answer DISABLED for every account. This also covers an attribute left
 		// empty in both maps, since an empty value can never mark either state.
 		if strings.EqualFold(strings.TrimSpace(disabledValue), strings.TrimSpace(enabledValue)) {
-			return UserStatusAttributes{}, fmt.Errorf("%s and %s: attribute %q is configured with the same value for both directions; an attribute cannot mean both disabled and enabled", disableUserAttributesField.FieldName, enableUserAttributesField.FieldName, name)
+			return UserStatusAttributes{}, fmt.Errorf(
+				"%s and %s: attribute %q is configured with the same value for both directions; "+
+					"an attribute cannot mean both disabled and enabled",
+				disableUserAttributesField.FieldName, enableUserAttributesField.FieldName, name)
 		}
 	}
 
@@ -287,7 +291,10 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 			{enableUserAttributesField.FieldName, enabled, disabled, disableUserAttributesField.FieldName},
 		} {
 			for _, name := range missingAttributesFold(direction.attrs, direction.other) {
-				return UserStatusAttributes{}, fmt.Errorf("%s and %s: attribute %q is configured for %s only; both directions must name the same attributes (use an empty value to clear it in the other direction)", direction.field, direction.otherF, name, direction.field)
+				return UserStatusAttributes{}, fmt.Errorf(
+					"%s and %s: attribute %q is configured for %s only; both directions must name the same attributes "+
+						"(use an empty value to clear it in the other direction)",
+					direction.field, direction.otherF, name, direction.field)
 			}
 		}
 	}
@@ -329,7 +336,9 @@ func readAttributeMapField(v *viper.Viper, name string) (map[string]string, erro
 		// operator who copies it straight back into the silent no-op this
 		// message exists to eliminate.
 		envName := "BATON_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-		return nil, fmt.Errorf("%s: %q is not a valid attribute map; use a YAML map, repeated --%s key=value flags, or a JSON object. An environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}'",
+		return nil, fmt.Errorf(
+			"%s: %q is not a valid attribute map; use a YAML map, repeated --%s key=value flags, or a JSON object. "+
+				"An environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}'",
 			name, raw, name, envName)
 	case map[string]interface{}:
 		if len(raw) == 0 {
