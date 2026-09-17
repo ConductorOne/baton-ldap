@@ -324,8 +324,13 @@ func readAttributeMapField(v *viper.Viper, name string) (map[string]string, erro
 		if strings.TrimSpace(raw) == "" {
 			return nil, nil
 		}
+		// Name the env var exactly as the SDK binds it: the "baton" prefix plus
+		// the - to _ replacer. Pointing at an unprefixed name would send an
+		// operator who copies it straight back into the silent no-op this
+		// message exists to eliminate.
+		envName := "BATON_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 		return nil, fmt.Errorf("%s: %q is not a valid attribute map; use a YAML map, repeated --%s key=value flags, or a JSON object. An environment variable must be JSON, for example %s='{\"revoke\":\"Y\"}'",
-			name, raw, name, strings.ToUpper(strings.ReplaceAll(name, "-", "_")))
+			name, raw, name, envName)
 	case map[string]interface{}:
 		if len(raw) == 0 {
 			return nil, nil

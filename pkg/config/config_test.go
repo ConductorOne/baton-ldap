@@ -188,6 +188,10 @@ func TestNewUserStatusAttributesFromEnv(t *testing.T) {
 		_, err := New(context.Background(), newEnvViper(t))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not a valid attribute map")
+		// The message names the variable the operator must actually set: the
+		// SDK's "baton" prefix plus the - to _ replacer. Asserted so it cannot
+		// drift from SetEnvPrefix.
+		require.Contains(t, err.Error(), "BATON_DISABLE_USER_ATTRIBUTES")
 	})
 }
 
