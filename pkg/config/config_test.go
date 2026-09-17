@@ -149,12 +149,33 @@ func TestNewUserStatusAttributes(t *testing.T) {
 		{
 			// Defensive path only: this table drives viper directly, so the raw
 			// value keeps its YAML type. On the real boot path the SDK's
-			// configuration loader has already stringified it (an unquoted TRUE
-			// arrives as "true"), which is why the README documents the quoting
-			// rule instead of claiming this is caught.
-			name:    "a non-string value is rejected when viper is driven directly",
+			// configuration loader has already stringified a scalar, which is why
+			// the README documents the quoting rule instead of claiming this is
+			// caught.
+			name:    "a scalar non-string value is rejected when viper is driven directly",
 			yaml:    "disable-user-attributes:\n  revoke: TRUE\n",
 			wantErr: "quote it",
+		},
+		{
+			// Reachable on the real boot path, unlike the scalar case above: the
+			// SDK's flag pass skips its cast coercion for nested values, so the
+			// list arrives intact and is rejected here.
+			name:    "a nested list value is rejected",
+			yaml:    "disable-user-attributes:\n  revoke:\n    - Y\n",
+			wantErr: "values must be strings",
+		},
+		{
+			name:    "a nested map value is rejected",
+			yaml:    "disable-user-attributes:\n  revoke:\n    a: b\n",
+			wantErr: "values must be strings",
+		},
+		{
+			// Sorted and complete: map order must not decide which attribute the
+			// operator is told about, and two boots should not be needed to learn
+			// about two mistakes.
+			name:    "every empty disable attribute is named, in sorted order",
+			yaml:    "disable-user-attributes:\n  zeta: \"\"\n  revoke: \"\"\n  alpha: \"\"\n",
+			wantErr: "alpha, revoke, zeta",
 		},
 	}
 

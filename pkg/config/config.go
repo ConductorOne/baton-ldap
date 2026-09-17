@@ -284,14 +284,23 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 	// empty case is the dangerous one -- left alone it would silently turn a
 	// disable into a clear -- and rejecting it here converts that into a startup
 	// failure.
+	// Collected and sorted rather than returned from inside the loop: Go
+	// randomizes map iteration, so an early return would name an arbitrary one
+	// of several empty attributes and the operator would have to boot again to
+	// discover the next. missingAttributesFold below sorts for the same reason.
+	var emptyDisabled []string
 	for name, disabledValue := range disabled {
 		if disabledValue == "" {
-			return UserStatusAttributes{}, fmt.Errorf(
-				"%s: attribute %q is configured with an empty value; an empty value cannot mark an account "+
-					"disabled, because an absent attribute reads as enabled. Use a value, or put the empty value on "+
-					"%s to clear the marker when enabling",
-				disableUserAttributesField.FieldName, name, enableUserAttributesField.FieldName)
+			emptyDisabled = append(emptyDisabled, name)
 		}
+	}
+	if len(emptyDisabled) > 0 {
+		sort.Strings(emptyDisabled)
+		return UserStatusAttributes{}, fmt.Errorf(
+			"%s: attribute(s) %s are configured with an empty value; an empty value cannot mark an account "+
+				"disabled, because an absent attribute reads as enabled. Use a value, or put the empty value on "+
+				"%s to clear the marker when enabling",
+			disableUserAttributesField.FieldName, strings.Join(emptyDisabled, ", "), enableUserAttributesField.FieldName)
 	}
 
 	for name, disabledValue := range disabled {
@@ -353,15 +362,27 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 //   - anything else, and a non-string map value, is an error rather than a
 //     guess.
 //
-// The non-string case is defensive rather than load-bearing: it is reachable
-// only when viper is driven programmatically. On the real boot path the SDK's
-// configuration loader has already round-tripped these fields through
-// cast.ToStringMapString, which stringifies every value -- a YAML `revoke: TRUE`
-// arrives here as the string "true", and a JSON {"revoke":true} as "" -- before
-// config.New runs. A non-string value therefore cannot be rejected here, and
-// "true" cannot be told apart from a quoted "true". That is why the YAML type
-// trap is documented in the README rather than caught, and why an empty value on
-// the disable side IS rejected at startup: "" is the coercion's dangerous output.
+// Which case is reachable depends on the shape of the value, and the SDK's
+// configuration loader decides it before config.New runs. Measured against the
+// running binary rather than inferred:
+//
+//   - A config-file value that is NESTED -- a list, or a map where a scalar was
+//     meant -- reaches this branch unchanged, because cli.VisitFlags skips its
+//     cast-based stringToString pass when hasNestedStringMapValue reports a
+//     nested value. `revoke: [Y]` and `revoke: {a: b}` both fail here with the
+//     offending type named.
+//   - A config-file value that is a scalar of the wrong type does NOT: cast
+//     stringifies it first, so an unquoted `revoke: TRUE` arrives as the string
+//     "true", indistinguishable from a quoted "true", is written that way, and
+//     is rejected by the directory at action time. Documented in the README
+//     rather than caught here.
+//   - A JSON env var holding a non-string does NOT either: cast's JSON decode
+//     into map[string]string allocates the key, fails on the value, and cast
+//     discards that error -- so {"revoke":true} resolves to {"revoke":""}. That
+//     "" is the coercion's dangerous output, which is why an empty value on the
+//     disable side is rejected at startup instead.
+//
+// So this branch is load-bearing for nested values, not dead code.
 //
 // Empty forms must be recognized explicitly rather than inferred, because
 // getting it wrong here is not a degraded feature but a failed boot: config.New
@@ -381,8 +402,8 @@ func readAttributeMapField(v *viper.Viper, name string) (map[string]string, erro
 			str, ok := value.(string)
 			if !ok {
 				return nil, fmt.Errorf(
-					"%s: attribute %q has a %T value (%v); quote it, so it is read as the LDAP value you intend "+
-						"(an unquoted TRUE/FALSE is a YAML boolean and would be written in a form the directory rejects)",
+					"%s: attribute %q has a %T value (%v); values must be strings, so quote it "+
+						"(an unquoted TRUE/FALSE is read as a YAML boolean, and a list or map is not a value at all)",
 					name, key, value, value)
 			}
 			out[key] = str
