@@ -124,10 +124,19 @@ func TestNewUserStatusAttributes(t *testing.T) {
 			wantErr: "same value for both directions",
 		},
 		{
+			// An empty value on the disable side can never mark an account
+			// disabled: the read path needs a present value that MATCHES, so
+			// absence reads as enabled. "Disable by clearing" would clear the
+			// marker, report success, and leave sync reporting enabled forever.
+			name:    "an empty value on the disable side is rejected",
+			yaml:    "disable-user-attributes:\n  revoke: \"\"\n",
+			wantErr: "empty value",
+		},
+		{
 			name: "an attribute empty in both directions is rejected",
 			yaml: "disable-user-attributes:\n  revoke: \"\"\n" +
 				"enable-user-attributes:\n  revoke: \"\"\n",
-			wantErr: "same value for both directions",
+			wantErr: "empty value",
 		},
 		{
 			name: "an empty map is unconfigured, not an error",
@@ -138,11 +147,12 @@ func TestNewUserStatusAttributes(t *testing.T) {
 			yaml: "disable-user-attributes: \"\"\n",
 		},
 		{
-			// The YAML type trap: an unquoted TRUE is a boolean, and writing it
-			// would produce a lowercase "true" that LDAP's Boolean syntax rejects
-			// -- at action time, against a customer directory. Rejected at startup
-			// instead, with a message that says what to do.
-			name:    "an unquoted boolean value is rejected with a quoting hint",
+			// Defensive path only: this table drives viper directly, so the raw
+			// value keeps its YAML type. On the real boot path the SDK's
+			// configuration loader has already stringified it (an unquoted TRUE
+			// arrives as "true"), which is why the README documents the quoting
+			// rule instead of claiming this is caught.
+			name:    "a non-string value is rejected when viper is driven directly",
 			yaml:    "disable-user-attributes:\n  revoke: TRUE\n",
 			wantErr: "quote it",
 		},

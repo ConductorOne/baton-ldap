@@ -266,6 +266,34 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 		return UserStatusAttributes{}, err
 	}
 
+	// An empty value on the DISABLE side is self-contradictory. The read path
+	// decides DISABLED only from a value that MATCHES the configured disabled
+	// value, so an absent attribute can never mean disabled -- configuredUserStatus
+	// skips an attribute with no values. "Disable by clearing the marker" would
+	// therefore clear the attribute, return success with status=disabled, and
+	// leave sync reporting the account enabled forever: exactly the
+	// action-vs-synced-state contradiction the symmetry check below exists to
+	// prevent. Empty stays legal on the ENABLE side, where "clear on enable" is
+	// meaningful and reads as enabled by fall-through.
+	//
+	// This is also the backstop for the SDK's value coercion. The configuration
+	// loader round-trips these maps through cast.ToStringMapString before
+	// config.New runs, which stringifies every value and discards the error: a
+	// non-string JSON value such as {"revoke":true} or {"revoke":null} arrives
+	// here as "", and an unquoted YAML TRUE arrives as the string "true". The
+	// empty case is the dangerous one -- left alone it would silently turn a
+	// disable into a clear -- and rejecting it here converts that into a startup
+	// failure.
+	for name, disabledValue := range disabled {
+		if disabledValue == "" {
+			return UserStatusAttributes{}, fmt.Errorf(
+				"%s: attribute %q is configured with an empty value; an empty value cannot mark an account "+
+					"disabled, because an absent attribute reads as enabled. Use a value, or put the empty value on "+
+					"%s to clear the marker when enabling",
+				disableUserAttributesField.FieldName, name, enableUserAttributesField.FieldName)
+		}
+	}
+
 	for name, disabledValue := range disabled {
 		enabledValue, ok := lookupAttributeFold(enabled, name)
 		if !ok {
@@ -325,11 +353,15 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 //   - anything else, and a non-string map value, is an error rather than a
 //     guess.
 //
-// Rejecting a non-string map value is what catches the YAML type trap: an
-// unquoted TRUE reads as a bool, and writing it would produce a lowercase
-// "true", which LDAP's Boolean syntax (RFC 4517) rejects -- at action time, on a
-// lifecycle call, in a customer directory. Refusing it at startup, naming the
-// attribute and asking for quotes, is both earlier and clearer.
+// The non-string case is defensive rather than load-bearing: it is reachable
+// only when viper is driven programmatically. On the real boot path the SDK's
+// configuration loader has already round-tripped these fields through
+// cast.ToStringMapString, which stringifies every value -- a YAML `revoke: TRUE`
+// arrives here as the string "true", and a JSON {"revoke":true} as "" -- before
+// config.New runs. A non-string value therefore cannot be rejected here, and
+// "true" cannot be told apart from a quoted "true". That is why the YAML type
+// trap is documented in the README rather than caught, and why an empty value on
+// the disable side IS rejected at startup: "" is the coercion's dangerous output.
 //
 // Empty forms must be recognized explicitly rather than inferred, because
 // getting it wrong here is not a degraded feature but a failed boot: config.New
