@@ -22,7 +22,7 @@ func TestCreateAccountCommaInCN(t *testing.T) {
 	connector, err := createConnector(ctx, t, "")
 	require.NoError(t, err)
 
-	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs)
+	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs, connector.config.UserStatusAttributes)
 
 	profile, err := structpb.NewStruct(map[string]interface{}{
 		"suffix":      "dc=example,dc=org",
@@ -126,7 +126,7 @@ func TestCreateAccountRandomPasswordSetAtCreation(t *testing.T) {
 	connector, container, err := createConnectorWithContainer(ctx, t, "")
 	require.NoError(t, err)
 
-	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs)
+	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs, connector.config.UserStatusAttributes)
 
 	profile, err := structpb.NewStruct(map[string]interface{}{
 		"suffix":      "dc=example,dc=org",
@@ -167,7 +167,7 @@ func TestCreateAccountDedupsHardcodedUserPassword(t *testing.T) {
 	connector, container, err := createConnectorWithContainer(ctx, t, "")
 	require.NoError(t, err)
 
-	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs)
+	ub := userBuilder(connector.client, connector.config.UserSearchDN, connector.config.DisableOperationalAttrs, connector.config.UserStatusAttributes)
 
 	const hardcoded = "HardCoded123!"
 	profile, err := structpb.NewStruct(map[string]interface{}{

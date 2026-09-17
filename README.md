@@ -40,9 +40,45 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 | `--base-dn` | `BATON_BASE_DN`   |  **optional** Base Distinguished name to search for LDAP objects in, for example `DC=example,DC=com` |
 | `--user-search-dn` | `BATON_USER_SEARCH_DN` |  **optional**  Distinguished name to search for User objects in.  If unset the Base DN is used. |
 | `--group-search-dn` | `BATON_GROUP_SEARCH_DN` |  **optional**  Distinguished name to search for User objects in.  If unset the Base DN is used. |
+| `--disable-user-attributes` | `BATON_DISABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as disabled, for example `--disable-user-attributes revoke=Y`. Unset by default. See [User enable/disable attributes](#user-enabledisable-attributes). |
+| `--enable-user-attributes` | `BATON_ENABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as enabled, for example `--enable-user-attributes revoke=N`. Unset by default. When both directions are configured they must name the same attributes. |
 | `--provisioning` | `BATON_PROVISIONING` |  **optional** Enable Provisioning of Groups by `baton-ldap`. `true` or `false`.  Defaults to `false` |
 
 Use `baton-ldap --help` to see all configuration flags and environment variables.
+
+## User enable/disable attributes
+
+Some directories mark an account's lifecycle state with their own attribute rather than the
+standard `userAccountControl` (Active Directory) or `nsAccountLock` (FreeIPA) flags -- for example
+IDMWorks uses `revoke`, with `Y` meaning disabled and `N` meaning enabled. Two optional maps
+configure that definition:
+
+```yaml
+disable-user-attributes:
+  revoke: "Y"
+enable-user-attributes:
+  revoke: "N"
+```
+
+- **Sync** reads both maps: an account is reported disabled when any configured attribute holds its
+  disabled value, enabled when any holds its enabled value, and otherwise falls through to
+  `userAccountControl` and `nsAccountLock`. Attribute values are compared case-insensitively and
+  whitespace-trimmed, and a multi-valued attribute counts if any of its values matches.
+- **`disable_user`** writes exactly the attributes named in `disable-user-attributes`; **`enable_user`**
+  writes exactly those in `enable-user-attributes`. Neither action touches an attribute the other
+  direction names.
+- Because of that isolation, when both maps are configured they must name the **same** attributes --
+  otherwise `enable_user` would leave an attribute at its disabled value and the synced status would
+  disagree with the action's result forever. A configuration that names different attributes in each
+  direction is rejected at startup. "Clear on enable" is written as an explicit empty value
+  (`enable-user-attributes: {"revoke": ""}`), which keeps the attribute name present.
+- The same attribute cannot carry the same value in both directions, attribute names must not be
+  empty, and neither `objectClass` nor any password attribute can be used as the marker; each is
+  rejected at startup.
+- Both maps are unset by default: a deployment that does not configure them behaves exactly as
+  before. When only one direction is configured, only that action is registered on the connector.
+- Attribute names are LDAP attribute names and are case-insensitive; names read from a config file
+  are lowercased by the configuration library, which does not change the attribute written.
 
 ## --create-account
 
@@ -165,6 +201,59 @@ trait's email list, and a `custom_attributes` key only when it maps to a trait f
   the SDK registers the action service outside it, so `update_profile` runs and writes with
   the flag unset. What the action does require is a bind account with permission to modify
   the target entry.
+
+## `enable_user`
+
+Marks a user account as enabled by writing the attributes configured in
+[`--enable-user-attributes`](#user-enabledisable-attributes).
+
+| Argument | Required | Description |
+|---|---|---|
+| `user_id` | yes | Account resource ID reference to the user to enable. From a C1 automation this is the C1 account identifier, not the LDAP DN -- see the notes under `update_profile`. |
+
+Returns `success`, `status` (`"enabled"`), `applied` (the number of attributes modified; `0` means
+the account was already enabled), `skipped`, and `updated_user` (the user resource re-fetched after
+the write; absent if the read-back failed, though the write itself still succeeded).
+
+**Notes:**
+- **Only the attributes named in `--enable-user-attributes` are written.** An attribute that only
+  `--disable-user-attributes` names is left exactly as it is; the action never clears an attribute
+  it was not configured to write.
+- **Clearing on enable.** Configure an attribute with an empty value
+  (`enable-user-attributes: {"revoke": ""}`) to remove the disabled marker rather than write a
+  value. The account then reads as enabled by **fall-through**: no configured attribute matches its
+  disabled value, so the connector uses its built-in rules, which default an unspecified status to
+  enabled. "Enabled" here means "the disabled marker is not present", not "a positive value was
+  written".
+- Idempotent: an account already in the requested state succeeds with `applied: 0`, and `skipped`
+  stays empty -- an already-satisfied attribute is not a skip.
+- If a configured attribute cannot be written (it is the entry's RDN attribute, for example) the
+  action fails with `FailedPrecondition` naming the attribute, on the first call and on every retry
+  alike.
+- After writing, the connector re-reads the entry and verifies that the targeted attributes now hold
+  their configured values (case-insensitive, whitespace-trimmed, any value of a multi-valued
+  attribute) or are absent when they were cleared. A mismatch fails the action instead of reporting
+  a success the directory does not reflect.
+- The action is registered only when `--enable-user-attributes` is set, so C1 never offers a
+  lifecycle action this deployment cannot carry out.
+- Not gated by `--provisioning`. The bind account needs permission to modify the target entry.
+
+## `disable_user`
+
+Marks a user account as disabled by writing the attributes configured in
+[`--disable-user-attributes`](#user-enabledisable-attributes).
+
+| Argument | Required | Description |
+|---|---|---|
+| `user_id` | yes | Account resource ID reference to the user to disable. From a C1 automation this is the C1 account identifier, not the LDAP DN -- see the notes under `update_profile`. |
+
+Returns `success`, `status` (`"disabled"`), `applied` (the number of attributes modified; `0` means
+the account was already disabled), `skipped`, and `updated_user`.
+
+**Notes:** every note above applies unchanged -- only `--disable-user-attributes`'s attributes are
+written, the action is idempotent, an unwritable configured attribute fails the action on the first
+call as well as every retry, the write is verified against the entry's actual attribute values, and
+registration is conditional on `--disable-user-attributes` being set.
 
 # Developing baton-ldap
 

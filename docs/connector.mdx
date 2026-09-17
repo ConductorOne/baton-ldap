@@ -45,9 +45,35 @@ Connector actions are custom capabilities that extend C1 automations with app-sp
 | Action name | Additional fields | Description |
 | ----------- | ----------------- | ----------- |
 | `create_ou` | `name` (string, required), `parent_dn` (string), `description` (string) | Create an LDAP organizational unit (`organizationalUnit`) under a parent container. `parent_dn` defaults to the configured base DN; a parent outside the base DN is rejected. Idempotent — creating an OU that already exists succeeds. |
+| `enable_user` | `user_id` (account resource ID, required) | Mark a user account as enabled by writing the attributes configured in `enable-user-attributes`. Registered only when that configuration is set. |
+| `disable_user` | `user_id` (account resource ID, required) | Mark a user account as disabled by writing the attributes configured in `disable-user-attributes`. Registered only when that configuration is set. |
 
 <Note>
   To use `create_ou`, the connector's bind account must have permission to add child entries under the target parent DN (by default, the configured base DN). For OpenLDAP and similar servers, this is write/add access on the parent container; for Active Directory, delegate the **Create Organizational Unit objects** right on the parent OU.
+</Note>
+
+#### User enable/disable attributes
+
+Some directories do not use the standard `userAccountControl` (Active Directory) or `nsAccountLock` (FreeIPA) flags to mark an account's lifecycle state, but their own attribute — IDMWorks, for example, uses `revoke`, where `Y` means disabled and `N` means enabled. `enable-user-attributes` and `disable-user-attributes` map LDAP attribute names to the values that mean *enabled* and *disabled*:
+
+```yaml
+disable-user-attributes:
+  revoke: "Y"
+enable-user-attributes:
+  revoke: "N"
+```
+
+Both maps are unset by default. When configured:
+
+- **Sync** reports an account as disabled when any configured attribute holds its disabled value, as enabled when any holds its enabled value, and otherwise falls back to `userAccountControl` then `nsAccountLock`. Values are compared case-insensitively and whitespace-trimmed; any value of a multi-valued attribute counts.
+- **`disable_user` writes exactly the attributes named in `disable-user-attributes`**, and **`enable_user` writes exactly those in `enable-user-attributes`**. Neither action touches an attribute named only in the other direction.
+- Because of that isolation, a configuration that sets both maps must name the **same** attributes in each — otherwise `enable_user` would leave an attribute at its disabled value while the synced status kept reporting the account as disabled. Asymmetric key sets are rejected at startup. To clear an attribute when enabling, give it an explicit empty value (`enable-user-attributes: {"revoke": ""}`), which keeps the attribute name present.
+- The same attribute cannot be given the same value in both directions; attribute names must not be empty; and `objectClass` and password attributes cannot be used as the marker.
+- Each action returns `success`, `status` (`"enabled"` / `"disabled"`), `applied` (the number of attributes changed; `0` means the account was already in the requested state), `skipped`, and `updated_user` (a best-effort re-fetch of the user resource after the write). The connector re-reads the entry and verifies the configured attributes now hold their configured values — or are absent, for a configured clear — before reporting success.
+- Unlike `update_profile`, these actions are **global**, not resource-scoped. `user_id` still takes the C1 account identifier rather than the LDAP DN, for the same reason.
+
+<Note>
+  With a "clear on enable" definition (`revoke: "Y"` / `revoke: ""`) the enabled state is reached by *fall-through* rather than by matching a positive value: no configured attribute matches its disabled value, so the built-in rules apply and an unspecified status defaults to enabled. "Enabled" therefore means "the disabled marker is absent".
 </Note>
 
 **Resource-scoped actions (user):**
