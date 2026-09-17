@@ -36,7 +36,7 @@ func userStatusActionSchema(name, displayName, description string, actionType v2
 		Name:        name,
 		DisplayName: displayName,
 		Description: description,
-		ActionType:  []v2.ActionType{actionType},
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_ACCOUNT, actionType},
 		Arguments: []*config_sdk.Field{
 			{
 				Name:        argUserID,

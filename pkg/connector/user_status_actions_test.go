@@ -303,7 +303,10 @@ func TestUserStatusActionSchemas(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			schema := tc.schema()
 			require.Equal(t, tc.wantName, schema.GetName())
-			require.Equal(t, []v2.ActionType{tc.wantAction}, schema.GetActionType())
+			// The base ACTION_TYPE_ACCOUNT is combined with the specific lifecycle
+			// type, matching baton-okta's enable_user/disable_user and
+			// baton-active-directory's.
+			require.Equal(t, []v2.ActionType{v2.ActionType_ACTION_TYPE_ACCOUNT, tc.wantAction}, schema.GetActionType())
 
 			var userIDArg *config_sdk.Field
 			for _, arg := range schema.GetArguments() {
