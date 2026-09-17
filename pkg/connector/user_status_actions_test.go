@@ -584,13 +584,19 @@ func TestUserStatusActions(t *testing.T) {
 	t.Run("an RDN attribute in the configuration fails on the first and every repeated call", func(t *testing.T) {
 		setDefinition(map[string]string{"cn": "renamed"}, nil)
 
+		// The seed entry's cn is multi-valued -- the bitnami image stores both
+		// "User1" and "user01" -- so assert the attribute is unchanged rather
+		// than assuming it holds the RDN value alone.
+		before := valuesOf(t, userDN, "cn")
+		require.NotEmpty(t, before)
+
 		for attempt := 1; attempt <= 2; attempt++ {
 			_, _, err := l.disableUser(ctx, mkStatusArgs(t, userDN, "user"))
 			require.Errorf(t, err, "attempt %d must fail", attempt)
 			require.Equal(t, codes.FailedPrecondition, status.Code(err))
 			require.Contains(t, err.Error(), "cn")
 		}
-		require.Equal(t, []string{"user01"}, valuesOf(t, userDN, "cn"))
+		require.Equal(t, before, valuesOf(t, userDN, "cn"), "the RDN attribute is left untouched")
 	})
 
 	t.Run("an attribute the directory does not define fails, never a false success", func(t *testing.T) {
