@@ -297,10 +297,10 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 	if len(emptyDisabled) > 0 {
 		sort.Strings(emptyDisabled)
 		return UserStatusAttributes{}, fmt.Errorf(
-			"%s: attribute(s) %s are configured with an empty value; an empty value cannot mark an account "+
-				"disabled, because an absent attribute reads as enabled. Use a value, or put the empty value on "+
-				"%s to clear the marker when enabling",
-			disableUserAttributesField.FieldName, strings.Join(emptyDisabled, ", "), enableUserAttributesField.FieldName)
+			"%s: %s configured with an empty value; an empty value cannot mark an account disabled, because an "+
+				"absent attribute reads as enabled. Use a value, or put the empty value on %s to clear the marker "+
+				"when enabling",
+			disableUserAttributesField.FieldName, attributeList(emptyDisabled), enableUserAttributesField.FieldName)
 	}
 
 	for name, disabledValue := range disabled {
@@ -320,21 +320,18 @@ func normalizeUserStatusAttributes(v *viper.Viper) (UserStatusAttributes, error)
 	}
 
 	if len(disabled) > 0 && len(enabled) > 0 {
-		for _, direction := range []struct {
-			field  string
-			attrs  map[string]string
-			other  map[string]string
-			otherF string
-		}{
-			{disableUserAttributesField.FieldName, disabled, enabled, enableUserAttributesField.FieldName},
-			{enableUserAttributesField.FieldName, enabled, disabled, disableUserAttributesField.FieldName},
-		} {
-			for _, name := range missingAttributesFold(direction.attrs, direction.other) {
-				return UserStatusAttributes{}, fmt.Errorf(
-					"%s and %s: attribute %q is configured for %s only; both directions must name the same attributes "+
-						"(use an empty value to clear it in the other direction)",
-					direction.field, direction.otherF, name, direction.field)
-			}
+		// The two directions must name the same attributes, so the fault is their
+		// symmetric difference -- collected across BOTH directions and sorted for
+		// the same reason as the empty-value check above: returning inside the
+		// loop tells the operator about one attribute per boot, and would never
+		// reach the second direction's names at all.
+		asymmetric := append(missingAttributesFold(disabled, enabled), missingAttributesFold(enabled, disabled)...)
+		if len(asymmetric) > 0 {
+			sort.Strings(asymmetric)
+			return UserStatusAttributes{}, fmt.Errorf(
+				"%s and %s: %s configured for only one direction; both directions must name the same attributes "+
+					"(use an empty value to clear it in the other direction)",
+				disableUserAttributesField.FieldName, enableUserAttributesField.FieldName, attributeList(asymmetric))
 		}
 	}
 
@@ -473,6 +470,16 @@ func normalizeAttributeMap(fieldName string, raw map[string]string) (map[string]
 		out[trimmed] = value
 	}
 	return out, nil
+}
+
+// attributeList renders attribute names for an operator-facing message,
+// agreeing with the count so a single name does not read as "attributes X are".
+// names must be sorted by the caller.
+func attributeList(names []string) string {
+	if len(names) == 1 {
+		return fmt.Sprintf("attribute %q is", names[0])
+	}
+	return fmt.Sprintf("attributes %s are", strings.Join(names, ", "))
 }
 
 // lookupAttributeFold returns the value configured for name in attrs, matching

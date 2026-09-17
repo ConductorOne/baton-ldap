@@ -97,6 +97,12 @@ func TestNewUserStatusAttributes(t *testing.T) {
 			wantErr: "must name the same attributes",
 		},
 		{
+			name: "every asymmetric attribute is named, in sorted order",
+			yaml: "disable-user-attributes:\n  alpha: \"1\"\n  beta: \"2\"\n" +
+				"enable-user-attributes:\n  gamma: \"3\"\n",
+			wantErr: "alpha, beta, gamma",
+		},
+		{
 			name:    "empty attribute name is rejected",
 			yaml:    "disable-user-attributes:\n  \"\": Y\n",
 			wantErr: "must not be empty",
