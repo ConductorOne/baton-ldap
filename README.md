@@ -73,16 +73,21 @@ enable-user-attributes:
   direction is rejected at startup. "Clear on enable" is written as an explicit empty value
   (`enable-user-attributes: {"revoke": ""}`), which keeps the attribute name present.
 - The same attribute cannot carry the same value in both directions, attribute names must not be
-  empty, and neither `objectClass` nor any password attribute can be used as the marker; each is
-  rejected at startup.
+  empty, neither `objectClass` nor any password attribute can be used as the marker, and the
+  **disable** side cannot use an empty value; each is rejected at startup. The disable rule is not
+  cosmetic: an absent attribute reads as enabled, so "disable by clearing the marker" would clear
+  the attribute, report success, and leave sync reporting the account enabled forever. An empty
+  value on the **enable** side stays legal -- that is clear-on-enable.
 - Both maps are unset by default: a deployment that does not configure them behaves exactly as
   before. When only one direction is configured, only that action is registered on the connector.
 - Attribute names are LDAP attribute names and are case-insensitive; names read from a config file
   are lowercased by the configuration library, which does not change the attribute written.
-- **Quote the values.** An unquoted `TRUE` or `FALSE` (`revoke: TRUE`) is read as a YAML boolean and
-  written in lowercase, which LDAP's Boolean syntax (RFC 4517) rejects -- the modify fails with an
-  invalid-syntax error rather than setting the attribute. `Y` and `N` are not YAML booleans and are
-  safe unquoted, but quoting every value avoids the trap entirely.
+- **Quote the values.** The configuration loader stringifies map values before the connector sees
+  them, so an unquoted `TRUE` or `FALSE` (`revoke: TRUE`) arrives as the string `"true"` and is
+  written that way; LDAP's Boolean syntax (RFC 4517) requires uppercase, so the modify is rejected
+  with an invalid-syntax error instead of setting the attribute. The connector cannot tell a quoted
+  `"true"` from an unquoted one by then, so this is not caught at startup -- quote every value.
+  `Y` and `N` are not YAML booleans and are safe unquoted.
 - **As an environment variable, the value must be JSON.** A nested YAML map and repeated
   `--disable-user-attributes key=value` flags both work, but an environment variable arrives as a
   string: `BATON_DISABLE_USER_ATTRIBUTES='{"revoke":"Y"}'` is accepted, while

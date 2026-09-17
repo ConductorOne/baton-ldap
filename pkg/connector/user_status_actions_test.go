@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/conductorone/baton-ldap/pkg/config"
@@ -664,14 +665,22 @@ func TestUserStatusActionsRevokeAttribute(t *testing.T) {
 
 	// Same root-exec pattern the dyngroup schema load uses: the bitnami
 	// container user has manage access to cn=config over the local ldapi socket.
-	require.NoError(t, container.CopyToContainer(ctx, []byte(revokeSchemaLDIF), "/tmp/revoke-schema.ldif", 0o600))
-	exitCode, _, err := container.Exec(ctx, []string{
+	//
+	// The LDIF is copied world-readable on purpose. CopyToContainer writes as
+	// root, and Exec runs as the image's user (UID 1001) -- a 0600 copy is
+	// unreadable by the process that has to read it, and ldapadd then exits 1
+	// with the reason on stderr, which the old version of this test discarded.
+	// Keep the output and put it in the assertion message so a failure here is
+	// self-diagnosing.
+	require.NoError(t, container.CopyToContainer(ctx, []byte(revokeSchemaLDIF), "/tmp/revoke-schema.ldif", 0o644))
+	exitCode, output, err := container.Exec(ctx, []string{
 		"ldapadd", "-Y", "EXTERNAL",
 		"-H", "ldapi://%2Fopt%2Fbitnami%2Fopenldap%2Fvar%2Frun%2Fldapi",
 		"-f", "/tmp/revoke-schema.ldif",
 	})
 	require.NoError(t, err)
-	require.Equal(t, 0, exitCode, "loading the revoke schema must succeed")
+	out, _ := io.ReadAll(output)
+	require.Equal(t, 0, exitCode, "loading the revoke schema must succeed: %s", out)
 
 	// `revoke` is not permitted by inetOrgPerson, so the entry opts into
 	// extensibleObject to be allowed to carry it.
@@ -709,6 +718,7 @@ func TestUserStatusActionsRevokeAttribute(t *testing.T) {
 
 	rv, _, err = l.disableUser(ctx, mkStatusArgs(t, userDN, "user"))
 	require.NoError(t, err)
-	require.Equal(t, float64(0), rv.GetFields()["applied"].GetNumberValue())
+	require.Equal(t, float64(1), rv.GetFields()["applied"].GetNumberValue(),
+		"the enable above really did write revoke=N, so this is a real change")
 	require.Equal(t, v2.Status_RESOURCE_STATUS_DISABLED, readStatus(t))
 }

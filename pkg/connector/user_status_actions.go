@@ -73,8 +73,9 @@ func userStatusActionSchema(name, displayName, description string, actionType v2
 			{
 				Name:        "updated_user",
 				DisplayName: "Updated User",
-				Description: "The user resource after the change, best-effort re-fetched. Absent if the read-back failed (the write itself still succeeded in that case).",
-				Field:       &config_sdk.Field_ResourceField{ResourceField: &config_sdk.ResourceField{}},
+				Description: "The user resource after the change, encoded from the entry the write was verified against. " +
+					"Absent only when encoding it failed -- a re-read that fails the verification fails the action instead.",
+				Field: &config_sdk.Field_ResourceField{ResourceField: &config_sdk.ResourceField{}},
 			},
 		},
 	}
@@ -209,7 +210,7 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 	// so "in state" means the same thing before and after.
 	if assertStatusAttrsWritten(entry, attrs, mask) == nil {
 		log.Debug(actionName+": account is already in the requested state", zap.String("dn", entry.DN))
-		return l.userStatusResult(ctx, log, entry, statusName, 0)
+		return l.userStatusResult(ctx, log, entry, actionName, statusName, 0)
 	}
 
 	result, err := applyUserAttrUpdate(ctx, l.client, l.config.UserSearchDN, actionName, targetDN.String(), attrs, mask)
@@ -244,7 +245,7 @@ func (l *LDAP) setUserEnabled(ctx context.Context, args *structpb.Struct, disabl
 		return nil, nil, err
 	}
 
-	return l.userStatusResult(ctx, log, verified, statusName, result.Applied)
+	return l.userStatusResult(ctx, log, verified, actionName, statusName, result.Applied)
 }
 
 // userStatusResult builds a successful lifecycle action's return value from an
@@ -257,6 +258,7 @@ func (l *LDAP) userStatusResult(
 	ctx context.Context,
 	log *zap.Logger,
 	entry *ldap.Entry,
+	actionName string,
 	statusName string,
 	applied int,
 ) (*structpb.Struct, annotations.Annotations, error) {
@@ -266,9 +268,9 @@ func (l *LDAP) userStatusResult(
 	}
 
 	if updatedRes, err := userResource(ctx, entry, l.config.UserStatusAttributes); err != nil {
-		log.Warn("ldap: encoding updated user resource failed", zap.String("dn", entry.DN), zap.Error(err))
+		log.Warn(actionName+": encoding updated user resource failed", zap.String("dn", entry.DN), zap.Error(err))
 	} else if rf, err := actions.NewResourceReturnField("updated_user", updatedRes); err != nil {
-		log.Warn("ldap: encoding updated_user return field failed", zap.String("dn", entry.DN), zap.Error(err))
+		log.Warn(actionName+": encoding updated_user return field failed", zap.String("dn", entry.DN), zap.Error(err))
 	} else {
 		fields = append(fields, rf)
 	}
