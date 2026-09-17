@@ -11,6 +11,7 @@ import (
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/require"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -683,7 +684,7 @@ func TestUserStatusActionsRevokeAttribute(t *testing.T) {
 		"ldapadd", "-Y", "EXTERNAL",
 		"-H", "ldapi://%2Fopt%2Fbitnami%2Fopenldap%2Fvar%2Frun%2Fldapi",
 		"-f", "/tmp/revoke-schema.ldif",
-	})
+	}, tcexec.Multiplexed())
 	require.NoError(t, err)
 	out, _ := io.ReadAll(output)
 	require.Equal(t, 0, exitCode, "loading the revoke schema must succeed: %s", out)
