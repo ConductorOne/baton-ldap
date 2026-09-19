@@ -343,7 +343,7 @@ func TestUpdateProfile(t *testing.T) {
 	l, err := createConnector(ctx, t, "")
 	require.NoError(t, err)
 
-	ub := userBuilder(l.client, l.config.UserSearchDN, l.config.DisableOperationalAttrs)
+	ub := userBuilder(l.client, l.config.UserSearchDN, l.config.DisableOperationalAttrs, l.config.UserStatusAttributes)
 
 	const userDN = "cn=user01,ou=users,dc=example,dc=org"
 

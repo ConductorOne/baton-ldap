@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 
+	"github.com/conductorone/baton-ldap/pkg/config"
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 )
 
@@ -55,6 +56,7 @@ type userResourceType struct {
 	client                  *ldap.Client
 	userSearchDN            *ldap3.DN
 	disableOperationalAttrs bool
+	statusAttributes        config.UserStatusAttributes
 }
 
 var _ builder.AccountManager = &userResourceType{}
@@ -81,7 +83,84 @@ func parseUserNames(user *ldap.Entry) (string, string, string) {
 	return firstName, lastName, displayName
 }
 
-func parseUserStatus(user *ldap.Entry) (v2.Status_ResourceStatus, error) {
+// parseUserStatus resolves an account's status. The operator-configured
+// enable/disable definition is consulted first; when it yields no verdict the
+// connector's built-in rules decide (userAccountControl bit 2, then FreeIPA's
+// nsAccountLock).
+//
+// It is a pure function: no I/O, no logging. The names of managed attributes
+// that were present but matched no configured value are returned alongside the
+// status so the caller can log a likely configuration typo at Debug.
+func parseUserStatus(user *ldap.Entry, statusAttributes config.UserStatusAttributes) (v2.Status_ResourceStatus, []string, error) {
+	status, unmatched := configuredUserStatus(user, statusAttributes)
+	if status != v2.Status_RESOURCE_STATUS_UNSPECIFIED {
+		return status, unmatched, nil
+	}
+	status, err := fallbackUserStatus(user)
+	if err != nil {
+		return v2.Status_RESOURCE_STATUS_UNSPECIFIED, unmatched, err
+	}
+	return status, unmatched, nil
+}
+
+// configuredUserStatus applies only the configured definition, with no
+// fall-through. The rule is order-independent and fail-safe: an alphabetical
+// (or map-order) first match would report a disabled account as ENABLED
+// whenever nsAccountLock and the configured attribute disagree, which is the
+// wrong answer in the unsafe direction.
+//
+//  1. if ANY managed attribute holds a value matching its configured DISABLED
+//     value -> DISABLED (any match wins; for a multi-valued attribute any value
+//     matching counts);
+//  2. else if any holds a value matching its configured ENABLED value -> ENABLED;
+//  3. else UNSPECIFIED, and the caller falls through to the built-in rules.
+//
+// A present-but-unmatched value contributes no verdict and is reported in the
+// returned list. Values are read with GetEqualFoldAttributeValues (plural): the
+// singular form returns only the first value, which would make a multi-valued
+// attribute read order-dependently.
+func configuredUserStatus(user *ldap.Entry, statusAttributes config.UserStatusAttributes) (v2.Status_ResourceStatus, []string) {
+	var unmatched []string
+	anyDisabled := false
+	anyEnabled := false
+
+	// A single pass over the managed attributes, classifying each one, rather
+	// than a disabled loop that returns early. Two properties depend on it:
+	// the verdict cannot depend on iteration order (any disabled match
+	// anywhere beats any enabled match), and an attribute holding an
+	// unrecognized value is reported even when another attribute already
+	// decided the status -- otherwise a typo in one entry of a multi-attribute
+	// definition is invisible exactly when the definition is large enough to
+	// need the report.
+	for _, attr := range statusAttributes.ManagedAttributes() {
+		values := user.GetEqualFoldAttributeValues(attr)
+		if len(values) == 0 {
+			continue
+		}
+		if disabledValue, ok := statusAttributes.DisabledValue(attr); ok && anyAttrValueMatches(values, disabledValue) {
+			anyDisabled = true
+			continue
+		}
+		if enabledValue, ok := statusAttributes.EnabledValue(attr); ok && anyAttrValueMatches(values, enabledValue) {
+			anyEnabled = true
+			continue
+		}
+		unmatched = append(unmatched, attr)
+	}
+
+	switch {
+	case anyDisabled:
+		return v2.Status_RESOURCE_STATUS_DISABLED, unmatched
+	case anyEnabled:
+		return v2.Status_RESOURCE_STATUS_ENABLED, unmatched
+	default:
+		return v2.Status_RESOURCE_STATUS_UNSPECIFIED, unmatched
+	}
+}
+
+// fallbackUserStatus is the connector's built-in status rule, used only when
+// the configured definition yields no verdict.
+func fallbackUserStatus(user *ldap.Entry) (v2.Status_ResourceStatus, error) {
 	userStatus := v2.Status_RESOURCE_STATUS_UNSPECIFIED
 
 	// Currently only UserAccountControlFlag from Microsoft or nsAccountLock from FreeIPA is supported
@@ -167,7 +246,7 @@ func containsBinaryData(value string) bool {
 }
 
 // Create a new connector resource for an LDAP User.
-func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
+func userResource(ctx context.Context, user *ldap.Entry, statusAttributes config.UserStatusAttributes) (*v2.Resource, error) {
 	l := ctxzap.Extract(ctx)
 
 	firstName, lastName, displayName := parseUserNames(user)
@@ -197,9 +276,17 @@ func userResource(ctx context.Context, user *ldap.Entry) (*v2.Resource, error) {
 		}
 	}
 
-	userStatus, err := parseUserStatus(user)
+	userStatus, unmatchedStatusAttrs, err := parseUserStatus(user, statusAttributes)
 	if err != nil {
 		return nil, err
+	}
+	if len(unmatchedStatusAttrs) > 0 {
+		// A managed attribute is present with a value matching neither of its
+		// configured values -- most likely a typo in the connector's
+		// enable/disable configuration. It contributes no verdict; the status
+		// below comes from the built-in rules instead.
+		l.Debug("baton-ldap: managed status attribute holds an unconfigured value",
+			zap.String("dn", user.DN), zap.Strings("attributes", unmatchedStatusAttrs))
 	}
 
 	// If the user status is not set, default to enabled
@@ -307,7 +394,7 @@ func (u *userResourceType) List(ctx context.Context, _ *v2.ResourceId, pt *pagin
 	var rv []*v2.Resource
 	for _, userEntry := range userEntries {
 		l.Debug("processing user", zap.String("dn", userEntry.DN))
-		ur, err := userResource(ctx, userEntry)
+		ur, err := userResource(ctx, userEntry, u.statusAttributes)
 		if err != nil {
 			return nil, pageToken, nil, err
 		}
@@ -339,7 +426,7 @@ func (u *userResourceType) Get(ctx context.Context, resourceId *v2.ResourceId, p
 
 	userEntry := userEntries[0]
 
-	ur, err := userResource(ctx, userEntry)
+	ur, err := userResource(ctx, userEntry, u.statusAttributes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ldap-connector: failed to get user: %w", err)
 	}
@@ -439,7 +526,7 @@ func (o *userResourceType) CreateAccount(
 		return nil, nil, nil, err
 	}
 
-	ur, err := userResource(ctx, acc)
+	ur, err := userResource(ctx, acc, o.statusAttributes)
 	if err != nil {
 		l.Error("baton-ldap: create-account failed to create resource", zap.Error(err), zap.String("dn", dn))
 		return nil, nil, nil, err
@@ -673,11 +760,12 @@ func getAccount(ctx context.Context, client *ldap.Client, dn string) (*ldap.Entr
 	return userEntry, nil
 }
 
-func userBuilder(client *ldap.Client, userSearchDN *ldap3.DN, disableOperationalAttrs bool) *userResourceType {
+func userBuilder(client *ldap.Client, userSearchDN *ldap3.DN, disableOperationalAttrs bool, statusAttributes config.UserStatusAttributes) *userResourceType {
 	return &userResourceType{
 		resourceType:            resourceTypeUser,
 		userSearchDN:            userSearchDN,
 		client:                  client,
 		disableOperationalAttrs: disableOperationalAttrs,
+		statusAttributes:        statusAttributes,
 	}
 }
