@@ -137,6 +137,20 @@ func (l *LDAP) GlobalActions(ctx context.Context, registry actions.ActionRegistr
 	if err := registry.Register(ctx, createOUActionSchema(), l.createOU); err != nil {
 		return fmt.Errorf("ldap-connector: failed to register create_ou action: %w", err)
 	}
+
+	// Registered per direction, so ConductorOne never offers a lifecycle action
+	// this configuration cannot carry out.
+	if len(l.config.UserStatusAttributes.Disabled) > 0 {
+		if err := registry.Register(ctx, disableUserActionSchema(), l.disableUser); err != nil {
+			return fmt.Errorf("ldap-connector: failed to register disable_user action: %w", err)
+		}
+	}
+	if len(l.config.UserStatusAttributes.Enabled) > 0 {
+		if err := registry.Register(ctx, enableUserActionSchema(), l.enableUser); err != nil {
+			return fmt.Errorf("ldap-connector: failed to register enable_user action: %w", err)
+		}
+	}
+
 	return nil
 }
 

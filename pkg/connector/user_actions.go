@@ -337,7 +337,7 @@ func (u *userResourceType) updateProfile(ctx context.Context, args *structpb.Str
 	// not turn a successful modify into a reported failure.
 	if entry, rerr := getAccount(ctx, u.client, result.DN); rerr != nil {
 		log.Warn("update_profile: read-back failed", zap.String("dn", result.DN), zap.Error(rerr))
-	} else if updatedRes, rerr := userResource(ctx, entry); rerr != nil {
+	} else if updatedRes, rerr := userResource(ctx, entry, u.statusAttributes); rerr != nil {
 		log.Warn("update_profile: encoding updated user resource failed", zap.String("dn", result.DN), zap.Error(rerr))
 	} else if rf, ferr := actions.NewResourceReturnField("updated_user", updatedRes); ferr != nil {
 		log.Warn("update_profile: encoding updated_user return field failed", zap.String("dn", result.DN), zap.Error(ferr))
