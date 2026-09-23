@@ -106,7 +106,7 @@ func countType(attrs []ldap3.Attribute, t string) int {
 }
 
 // attrsToMap indexes an attribute list by type. It fails the test when any
-// attribute carries no value, which is the property CXP-1123 is about: a
+// attribute carries no value, which is the property this fix is about: a
 // zero-length value fails the whole LDAP Add on a Directory String attribute
 // (result 21) and is stored verbatim on an IA5 String one.
 func attrsToMap(t *testing.T, attrs []ldap3.Attribute) map[string][]string {
@@ -119,7 +119,7 @@ func attrsToMap(t *testing.T, attrs []ldap3.Attribute) map[string][]string {
 	return out
 }
 
-// TestExtractProfileOmitsEmptyValues pins CXP-1123: an optional field mapped
+// TestExtractProfileOmitsEmptyValues pins the rule: an optional field mapped
 // into the create-account profile with an empty value must produce no LDAP
 // attribute, while real values -- including non-string scalars -- must survive.
 // Runs without Docker: extractProfile only touches its client for
