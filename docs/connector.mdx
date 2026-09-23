@@ -36,6 +36,14 @@ To use this feature, configure the following account provisioning mappings:
     Automatic UID number calculation assigns `uidNumber` only. You must provide `gidNumber` manually in the **Additional Attributes** mapping. If you set **Calculate the next valid UID Number** to `true`, any `uidNumber` value provided in **Additional Attributes** is ignored.
 </Note>
 
+<Note>
+    A mapping that resolves to an empty value is **omitted** from the LDAP add. A zero-length value is not portable across attribute types — a directory rejects the whole add with result 21 (`Invalid Attribute Syntax`) on most of them — so an optional field the account leaves unset cannot break account creation, and it is not stored as an empty value either. A list keeps its non-empty entries and is omitted only when none remain. Values such as `false` and `0` are real values and are still sent.
+
+    `objectClass` is the exception: a mapping that resolves to no object class at all is rejected before the add, because an account cannot be created without one.
+
+    This is the opposite of `update_profile`, where an empty `custom_attributes` value **clears** the attribute. See the `update_profile` rules under Connector actions.
+</Note>
+
 ### Connector actions
 
 Connector actions are custom capabilities that extend C1 automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.

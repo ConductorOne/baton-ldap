@@ -64,8 +64,12 @@ jobs:
       - name: Create account
         env:
           ACCOUNT_DISPLAYNAME: 'Example User'
+          # The empty description is deliberate: a mapped value the profile left
+          # unset must be omitted from the add rather than sent as a zero-length
+          # value, which OpenLDAP rejects with result 21 and which would fail this
+          # step.
           CREATE_ACCOUNT_FLAGS: >-
-            --create-account-login="example-user" --create-account-profile='{"rdnKey":"cn","rdnValue":"example-user","path":"","suffix":"dc=example,dc=org","objectClass":["top","person"],"additionalAttributes":{"cn":"Example User","sn":"User"}}'
+            --create-account-login="example-user" --create-account-profile='{"rdnKey":"cn","rdnValue":"example-user","path":"","suffix":"dc=example,dc=org","objectClass":["top","person"],"additionalAttributes":{"cn":"Example User","sn":"User","description":""}}'
         run: ./baton-ldap ${{ env.CREATE_ACCOUNT_FLAGS }}
       - name: Check account was created
         id: check_account
