@@ -205,23 +205,23 @@ func nonEmptyStrings(vals []string) []string {
 
 // nonEmptyVals returns the string values of vals without the entries that must
 // not become an LDAP value: nil (which toVals would render as the literal
-// "<nil>") and elements that render to the empty string. Rendering is delegated
-// to toVals/toAttr, so a kept entry keeps the exact form toAttr would have given
-// it. The result is nil when nothing is left.
+// "<nil>") and elements that render to the empty string. Rendering goes through
+// toVals one element at a time, so a kept entry keeps the exact form toAttr
+// would have given it. The result is nil when nothing is left.
+//
+// One element at a time matters: toVals types the whole slice from its first
+// element, so a single call over a list whose elements do not all share that
+// type panics on the type assertion. Per element there is nothing to disagree
+// with.
 func nonEmptyVals(vals []any) []string {
-	kept := make([]any, 0, len(vals))
+	var out []string
 	for _, v := range vals {
 		if v == nil {
 			continue
 		}
-		if s, ok := v.(string); ok && s == "" {
-			continue
+		if s := toVals([]any{v})[0]; s != "" {
+			out = append(out, s)
 		}
-		kept = append(kept, v)
 	}
-	if len(kept) == 0 {
-		return nil
-	}
-
-	return nonEmptyStrings(toVals(kept))
+	return out
 }

@@ -21,11 +21,11 @@ func TestParseDN(t *testing.T) {
 	require.Equal(t, "ou=example", dn.String())
 }
 
-// TestToAttrIfNotEmpty pins the create-account rule from CXP-1123: a value the
-// profile left unset produces no attribute at all, because an LDAP Add carrying
-// a zero-length value is rejected on a Directory String attribute (result 21),
-// stored verbatim on an IA5 String one, and gets the literal "<nil>" stored on
-// either when the value is nil. Runs without Docker.
+// TestToAttrIfNotEmpty pins the create-account rule: a value the profile left
+// unset produces no attribute at all, because an LDAP Add carrying a zero-length
+// value is rejected on a Directory String attribute (result 21), stored verbatim
+// on an IA5 String one, and gets the literal "<nil>" stored on either when the
+// value is nil. Runs without Docker.
 func TestToAttrIfNotEmpty(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -48,6 +48,10 @@ func TestToAttrIfNotEmpty(t *testing.T) {
 		{name: "nil and empty entries are filtered from an any slice", value: []interface{}{nil, "a", "", nil}, want: []string{"a"}},
 		{name: "a trailing nil does not hide the other entries", value: []interface{}{"a", nil}, want: []string{"a"}},
 		{name: "a leading nil does not turn into the literal <nil>", value: []interface{}{nil, "a"}, want: []string{"a"}},
+		// A list whose elements do not share a type is rendered per element, so
+		// it cannot reach the type assertion that toVals would panic on.
+		{name: "mixed-type entries are each rendered", value: []interface{}{"a", float64(1)}, want: []string{"a", "1"}},
+		{name: "a leading nil does not expose the rest to a mixed-type panic", value: []interface{}{nil, "a", float64(1)}, want: []string{"a", "1"}},
 		{name: "an any entry that renders empty is dropped", value: []interface{}{[]byte{}}, dropped: true},
 		{name: "false is a real value and is kept", value: false, want: []string{"false"}},
 		// structpb is the only source of these values and produces numbers only
@@ -68,19 +72,4 @@ func TestToAttrIfNotEmpty(t *testing.T) {
 			require.Equal(t, tc.want, attr.Vals)
 		})
 	}
-}
-
-// TestToAttrIfNotEmptyPinsMixedListPanic records a pre-existing limitation of
-// toVals, which types a whole list from its first element and then asserts every
-// other element to that same type. toAttrIfNotEmpty removes nil elements before
-// toVals sees them, so nil is safe, but a list mixing two non-nil JSON types
-// still panics. Only a profile whose mapped list holds more than one JSON type
-// reaches it. Fixing it means changing toVals, which every caller of toAttr
-// shares, so it is deliberately out of scope for CXP-1123 and is reported in the
-// pull request body instead of being fixed here. This test pins today's
-// behaviour so that a later change to it is conscious rather than accidental.
-func TestToAttrIfNotEmptyPinsMixedListPanic(t *testing.T) {
-	require.Panics(t, func() {
-		_, _ = toAttrIfNotEmpty("title", []interface{}{"a", 1})
-	})
 }
