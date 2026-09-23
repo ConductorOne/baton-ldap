@@ -204,15 +204,25 @@ func TestExtractProfileObjectClass(t *testing.T) {
 	}
 
 	t.Run("a list naming no object class is rejected", func(t *testing.T) {
-		for _, objectClass := range []interface{}{
-			[]interface{}{},
-			[]interface{}{"", ""},
-			nil,
-			"",
-			[]interface{}{nil},
+		for _, tc := range []struct {
+			name        string
+			objectClass interface{}
+			want        string
+		}{
+			// The two rows the new guard covers. The message is the one the
+			// existing type check already used for a missing objectClass.
+			{name: "empty list", objectClass: []interface{}{}, want: "invalid/missing objectClass"},
+			{name: "list of empty strings", objectClass: []interface{}{"", ""}, want: "invalid/missing objectClass"},
+			// Pre-existing paths, asserted by exact message so a change to the
+			// guard cannot quietly loosen them.
+			{name: "missing", objectClass: nil, want: "invalid/missing objectClass"},
+			{name: "scalar string", objectClass: "", want: "invalid/missing objectClass"},
+			{name: "nil element", objectClass: []interface{}{nil}, want: "invalid objectClass"},
 		} {
-			_, _, err := u.extractProfile(ctx, newProfile(t, objectClass))
-			require.ErrorContains(t, err, "objectClass")
+			t.Run(tc.name, func(t *testing.T) {
+				_, _, err := u.extractProfile(ctx, newProfile(t, tc.objectClass))
+				require.EqualError(t, err, tc.want)
+			})
 		}
 	})
 
