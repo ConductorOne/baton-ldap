@@ -143,3 +143,85 @@ func toAttr(k string, v interface{}) ldap.Attribute {
 		}
 	}
 }
+
+// toAttrIfNotEmpty returns the LDAP attribute for a profile value and reports
+// whether it may be sent at all. It is the create-account rule: a value the
+// profile left unset must produce no attribute, because an LDAP Add carrying
+// one is rejected outright on a Directory String attribute (result 21,
+// "Invalid Attribute Syntax") and accepted-but-stored on an IA5 String one
+// (mail). A create-account profile carries no syntax information, so the
+// connector cannot tell the two apart, and the create-account task is not
+// retryable.
+//
+// A value is dropped when it is nil, the empty string, a zero-length []byte, or
+// a list with no usable entry. nil is dropped rather than converted because
+// toAttr's default branch renders it as the literal "<nil>", which the
+// directory accepts and stores -- turning a loud failure into silent bad data.
+// Non-string scalars (false, 0) are real values and are kept.
+//
+// update_profile is the opposite rule -- there an empty value means "remove the
+// attribute" (see buildUserAttrChanges) -- so this helper belongs to the create
+// path only and must not be reused there.
+func toAttrIfNotEmpty(k string, v any) (ldap.Attribute, bool) {
+	switch val := v.(type) {
+	case nil:
+		return ldap.Attribute{}, false
+	case string:
+		if val == "" {
+			return ldap.Attribute{}, false
+		}
+	case []byte:
+		if len(val) == 0 {
+			return ldap.Attribute{}, false
+		}
+	case []string:
+		vals := nonEmptyStrings(val)
+		if len(vals) == 0 {
+			return ldap.Attribute{}, false
+		}
+		return ldap.Attribute{Type: k, Vals: vals}, true
+	case []any:
+		vals := nonEmptyVals(val)
+		if len(vals) == 0 {
+			return ldap.Attribute{}, false
+		}
+		return ldap.Attribute{Type: k, Vals: vals}, true
+	}
+
+	return toAttr(k, v), true
+}
+
+// nonEmptyStrings returns vals without its empty entries. The result is nil
+// when nothing is left.
+func nonEmptyStrings(vals []string) []string {
+	var out []string
+	for _, v := range vals {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// nonEmptyVals returns the string values of vals without the entries that must
+// not become an LDAP value: nil (which toVals would render as the literal
+// "<nil>") and elements that render to the empty string. Rendering is delegated
+// to toVals/toAttr, so a kept entry keeps the exact form toAttr would have given
+// it. The result is nil when nothing is left.
+func nonEmptyVals(vals []any) []string {
+	kept := make([]any, 0, len(vals))
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		kept = append(kept, v)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+
+	return nonEmptyStrings(toVals(kept))
+}

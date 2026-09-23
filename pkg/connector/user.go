@@ -701,12 +701,26 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 	if !ok {
 		return "", nil, fmt.Errorf("invalid/missing objectClass")
 	}
+	// A list of empty strings passes the type check below but carries no object
+	// class, and toAttrIfNotEmpty would then drop the attribute from the add --
+	// leaving a directory rejection of result 65 (object class violation)
+	// instead of a message naming the real problem. objectClass is the one
+	// mapped value the add cannot do without, so require a non-empty one here.
+	hasObjectClass := false
 	for _, oc := range objectClass {
-		if s, ok := oc.(string); !ok {
+		s, ok := oc.(string)
+		if !ok {
 			return "", nil, fmt.Errorf("invalid objectClass")
-		} else if strings.EqualFold(s, "posixAccount") {
+		}
+		if s != "" {
+			hasObjectClass = true
+		}
+		if strings.EqualFold(s, "posixAccount") {
 			isPosixAccount = true
 		}
+	}
+	if !hasObjectClass {
+		return "", nil, fmt.Errorf("invalid/missing objectClass")
 	}
 
 	attrs := []ldap3.Attribute{}
@@ -733,7 +747,13 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 			continue
 		}
 
-		attrs = append(attrs, toAttr(k, v))
+		// Unset optional fields mapped into the profile must not reach the
+		// directory: a zero-length value fails the whole add on a Directory
+		// String attribute (result 21) and is stored verbatim on an IA5 String
+		// one. See toAttrIfNotEmpty.
+		if attr, ok := toAttrIfNotEmpty(k, v); ok {
+			attrs = append(attrs, attr)
+		}
 	}
 
 	additionalAttributes, ok := data["additionalAttributes"].(map[string]interface{})
@@ -743,7 +763,9 @@ func (o *userResourceType) extractProfile(ctx context.Context, accountInfo *v2.A
 				continue
 			}
 
-			attrs = append(attrs, toAttr(k, v))
+			if attr, ok := toAttrIfNotEmpty(k, v); ok {
+				attrs = append(attrs, attr)
+			}
 		}
 	}
 

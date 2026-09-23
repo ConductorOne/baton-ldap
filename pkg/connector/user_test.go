@@ -105,6 +105,160 @@ func countType(attrs []ldap3.Attribute, t string) int {
 	return n
 }
 
+// attrsToMap indexes an attribute list by type. It fails the test when any
+// attribute carries no value, which is the property CXP-1123 is about: a
+// zero-length value fails the whole LDAP Add on a Directory String attribute
+// (result 21) and is stored verbatim on an IA5 String one.
+func attrsToMap(t *testing.T, attrs []ldap3.Attribute) map[string][]string {
+	t.Helper()
+	out := make(map[string][]string, len(attrs))
+	for _, a := range attrs {
+		require.NotEmpty(t, a.Vals, "attribute %q was sent with no value", a.Type)
+		out[a.Type] = a.Vals
+	}
+	return out
+}
+
+// TestExtractProfileOmitsEmptyValues pins CXP-1123: an optional field mapped
+// into the create-account profile with an empty value must produce no LDAP
+// attribute, while real values -- including non-string scalars -- must survive.
+// Runs without Docker: extractProfile only touches its client for
+// calculatePosixUIDNumber, which this profile leaves unset.
+func TestExtractProfileOmitsEmptyValues(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+	u := &userResourceType{}
+
+	profile, err := structpb.NewStruct(map[string]interface{}{
+		// Required shape fields -- all reserved, none may become an attribute.
+		"suffix":      "dc=example,dc=org",
+		"path":        "ou=users",
+		"rdnKey":      "cn",
+		"rdnValue":    "jdoe",
+		"objectClass": []interface{}{"inetOrgPerson", ldapObjectClassTop},
+		// Real values -- must survive.
+		"cn":       "jdoe",
+		"sn":       "Doe",
+		"isActive": false,
+		// Unset optional fields -- must not become attributes. A null value
+		// reaches here as nil because structpb stores it as a NullValue.
+		"title":           "",
+		"mail":            "",
+		"description":     nil,
+		"telephoneNumber": []interface{}{},
+		"employeeNumber":  []interface{}{"", ""},
+		// A list with one usable entry keeps only that entry.
+		"givenName": []interface{}{"", "Jane"},
+	})
+
+	require.NoError(t, err)
+
+	accountInfo := &v2.AccountInfo{}
+	accountInfo.SetProfile(profile)
+
+	dn, attrs, err := u.extractProfile(ctx, accountInfo)
+	require.NoError(t, err)
+	require.Equal(t, "cn=jdoe,ou=users,dc=example,dc=org", dn)
+
+	got := attrsToMap(t, attrs)
+	require.Equal(t, map[string][]string{
+		"objectClass": {"inetOrgPerson", "top"},
+		"cn":          {"jdoe"},
+		"sn":          {"Doe"},
+		"isActive":    {"false"},
+		"givenName":   {"Jane"},
+	}, got)
+
+	for _, absent := range []string{
+		"title", "mail", "description", "telephoneNumber", "employeeNumber",
+		"suffix", "path", "rdnKey", "rdnValue", "login", "calculatePosixUIDNumber", "additionalAttributes",
+	} {
+		require.NotContains(t, got, absent)
+	}
+}
+
+// TestExtractProfileObjectClass covers objectClass, the one mapped value the add
+// cannot do without. A list that names no object class passes the type check in
+// extractProfile, and toAttrIfNotEmpty would then drop the attribute entirely,
+// leaving the directory to reject the add with an opaque result 65. Because the
+// create-account task is not retryable, extractProfile reports it instead.
+func TestExtractProfileObjectClass(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+	u := &userResourceType{}
+
+	newProfile := func(t *testing.T, objectClass interface{}) *v2.AccountInfo {
+		t.Helper()
+		profile, err := structpb.NewStruct(map[string]interface{}{
+			"suffix":      "dc=example,dc=org",
+			"path":        "ou=users",
+			"rdnKey":      "cn",
+			"rdnValue":    "jdoe",
+			"cn":          "jdoe",
+			"sn":          "Doe",
+			"objectClass": objectClass,
+		})
+		require.NoError(t, err)
+
+		accountInfo := &v2.AccountInfo{}
+		accountInfo.SetProfile(profile)
+		return accountInfo
+	}
+
+	t.Run("a list naming no object class is rejected", func(t *testing.T) {
+		for _, objectClass := range []interface{}{
+			[]interface{}{},
+			[]interface{}{"", ""},
+			nil,
+			"",
+			[]interface{}{nil},
+		} {
+			_, _, err := u.extractProfile(ctx, newProfile(t, objectClass))
+			require.ErrorContains(t, err, "objectClass")
+		}
+	})
+
+	t.Run("empty entries are filtered from a list that still names a class", func(t *testing.T) {
+		_, attrs, err := u.extractProfile(ctx, newProfile(t, []interface{}{"", "person"}))
+		require.NoError(t, err)
+		require.Equal(t, []string{"person"}, attrsToMap(t, attrs)["objectClass"])
+	})
+}
+
+// TestExtractProfileOmitsEmptyAdditionalAttributes covers the second append
+// site: values mapped under additionalAttributes follow the same rule.
+func TestExtractProfileOmitsEmptyAdditionalAttributes(t *testing.T) {
+	ctx := ctxzap.ToContext(context.Background(), zap.Must(zap.NewDevelopment()))
+	u := &userResourceType{}
+
+	profile, err := structpb.NewStruct(map[string]interface{}{
+		"suffix":      "dc=example,dc=org",
+		"path":        "",
+		"rdnKey":      "cn",
+		"rdnValue":    "jdoe",
+		"sn":          "Doe",
+		"objectClass": []interface{}{"inetOrgPerson", ldapObjectClassTop},
+		"additionalAttributes": map[string]interface{}{
+			"l":            "Austin",
+			"title":        "",
+			"department":   nil,
+			"employeeType": []interface{}{"", nil},
+		},
+	})
+
+	require.NoError(t, err)
+
+	accountInfo := &v2.AccountInfo{}
+	accountInfo.SetProfile(profile)
+
+	_, attrs, err := u.extractProfile(ctx, accountInfo)
+	require.NoError(t, err)
+
+	got := attrsToMap(t, attrs)
+	require.Equal(t, []string{"Austin"}, got["l"])
+	require.NotContains(t, got, "title")
+	require.NotContains(t, got, "department")
+	require.NotContains(t, got, "employeeType")
+}
+
 // bindAs dials the container and attempts a simple bind, proving whether the
 // given password authenticates the DN.
 func bindAs(ctx context.Context, t *testing.T, container *openldap.OpenLDAPContainer, dn, password string) error {
