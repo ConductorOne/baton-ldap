@@ -1,0 +1,78 @@
+version: 1
+
+dn: ou=groups,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: groups
+
+dn: ou=users,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: users
+
+dn: cn=alice,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: alice
+sn: Smith
+uid: alice
+
+dn: cn=bob,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bob
+sn: Jones
+uid: bob
+
+dn: cn=carol,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: carol
+sn: Brown
+uid: carol
+
+# A groupOfNames group, with membership in `member`. groupOfNames does not permit
+# uniqueMember, so a write to uniqueMember is rejected (65) and a delete from it
+# reports "attribute not present" (16) -- which is the silent failure this fixture
+# exists to catch.
+dn: cn=staff,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: staff
+description: Staff (groupOfNames)
+member: cn=alice,ou=users,dc=example,dc=org
+member: cn=bob,ou=users,dc=example,dc=org
+
+# A groupOfUniqueNames group: the class the connector's documentation used to
+# claim all groups used.
+dn: cn=uniquenames,ou=groups,dc=example,dc=org
+objectclass: groupOfUniqueNames
+objectclass: top
+cn: uniquenames
+owner: cn=alice,ou=users,dc=example,dc=org
+uniqueMember: cn=alice,ou=users,dc=example,dc=org
+
+# A structural posixGroup with no members at all: the entry shows nothing, so the
+# membership attribute comes from the object classes (memberUid first).
+dn: cn=posix,ou=groups,dc=example,dc=org
+objectclass: posixGroup
+objectclass: top
+cn: posix
+gidnumber: 4000
+
+# Nested groups: inner holds carol, outer holds inner. A revoke of carol from
+# outer must not report success -- outer holds no direct value for carol, and the
+# membership the read path reports comes from the expansion of inner.
+dn: cn=inner,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: inner
+description: Inner group (holds carol)
+member: cn=carol,ou=users,dc=example,dc=org
+
+dn: cn=outer,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: outer
+description: Outer group (holds inner)
+member: cn=inner,ou=groups,dc=example,dc=org
