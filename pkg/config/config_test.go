@@ -332,3 +332,77 @@ func TestNewUserStatusAttributesValueNotLowercased(t *testing.T) {
 	require.Equal(t, "Y", cfg.UserStatusAttributes.Disabled["revoke"])
 	require.NotEqual(t, "y", cfg.UserStatusAttributes.Disabled["revoke"])
 }
+
+// TestNewGroupMemberAttribute covers the group-member-attribute field: the four
+// accepted values, casing normalisation, the unset default, and that anything
+// else is rejected rather than degraded to auto (a typo must not silently turn a
+// pin off).
+func TestNewGroupMemberAttribute(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "unset is auto, stored as the empty value",
+		},
+		{
+			name: "explicit auto normalizes to the empty default",
+			yaml: "group-member-attribute: auto\n",
+		},
+		{
+			name: "member is accepted",
+			yaml: "group-member-attribute: member\n",
+			want: GroupMemberAttributeMember,
+		},
+		{
+			name: "uniqueMember is accepted",
+			yaml: "group-member-attribute: uniqueMember\n",
+			want: GroupMemberAttributeUniqueMember,
+		},
+		{
+			name: "memberUid is accepted",
+			yaml: "group-member-attribute: memberUid\n",
+			want: GroupMemberAttributeMemberUid,
+		},
+		{
+			name: "casing is normalized to the canonical attribute name",
+			yaml: "group-member-attribute: UNIQUEMEMBER\n",
+			want: GroupMemberAttributeUniqueMember,
+		},
+		{
+			name: "surrounding whitespace is trimmed",
+			yaml: "group-member-attribute: \"  memberUid  \"\n",
+			want: GroupMemberAttributeMemberUid,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := userStatusConfig(t, tc.yaml)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.GroupMemberAttribute)
+		})
+	}
+
+	t.Run("an attribute this connector does not write is rejected", func(t *testing.T) {
+		_, err := userStatusConfig(t, "group-member-attribute: memberOf\n")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is not a group membership attribute")
+	})
+
+	t.Run("a value shaped like a misspelling is rejected rather than degraded to auto", func(t *testing.T) {
+		_, err := userStatusConfig(t, "group-member-attribute: member-uid\n")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "group-member-attribute")
+	})
+}
+
+// TestEffectiveGroupMemberAttribute pins the contract the connector relies on:
+// an unset field and an explicit auto are the same value, so a Config built
+// without the field keeps the learning behavior.
+func TestEffectiveGroupMemberAttribute(t *testing.T) {
+	require.Equal(t, GroupMemberAttributeAuto, (&Config{}).EffectiveGroupMemberAttribute())
+	require.Equal(t, GroupMemberAttributeAuto, (&Config{GroupMemberAttribute: GroupMemberAttributeAuto}).EffectiveGroupMemberAttribute())
+	require.Equal(t, GroupMemberAttributeMemberUid, (&Config{GroupMemberAttribute: GroupMemberAttributeMemberUid}).EffectiveGroupMemberAttribute())
+}

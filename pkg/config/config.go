@@ -48,6 +48,38 @@ var (
 	enableUserAttributesField = field.StringMapField("enable-user-attributes",
 		field.WithDescription("Map of LDAP attribute name to the value that marks a user account as enabled, for example \"revoke: N\". "+
 			"Unset by default. When both directions are configured they must name the same attributes."))
+
+	// Defaulted to "auto" rather than left unset: the auto behavior is what the
+	// connector does with no configuration at all, and pre-filling it makes the
+	// default visible in the configuration UI instead of looking like an empty
+	// field an operator should fill in.
+	groupMemberAttributeField = field.StringField("group-member-attribute",
+		field.WithDescription("Which LDAP attribute to write group membership to. \"auto\" (default) learns it from the group entry "+
+			"and from the server's schema: the attribute the entry already uses is written, and an attribute the entry does not permit "+
+			"is rejected by the server, after which the next candidate is tried. Pin it to \"member\", \"uniqueMember\" or \"memberUid\" "+
+			"when the directory cannot be learned from, for example when schema checking is disabled so that nothing is ever rejected. "+
+			"A pin governs where a new grant is written; a revoke always removes the membership from wherever it actually is, so a "+
+			"revoke can never report success while leaving the member."),
+		field.WithDefaultValue(GroupMemberAttributeAuto))
+)
+
+// Group member attribute modes. The default learns the attribute per entry from
+// the group entry and the server's schema (see pkg/connector/group_membership.go);
+// a pin overrides that learning for directories that cannot be learned from.
+const (
+	// GroupMemberAttributeAuto learns the attribute: the entry's own content
+	// first, then its object classes, with the server's schema as the authority
+	// on what the entry permits.
+	GroupMemberAttributeAuto = "auto"
+	// GroupMemberAttributeMember is the RFC 4519 DN-valued attribute of
+	// groupOfNames, and the one rfc2307bis clients read.
+	GroupMemberAttributeMember = "member"
+	// GroupMemberAttributeUniqueMember is the DN-valued attribute of
+	// groupOfUniqueNames.
+	GroupMemberAttributeUniqueMember = "uniqueMember"
+	// GroupMemberAttributeMemberUid is the login-name-valued attribute of
+	// posixGroup.
+	GroupMemberAttributeMemberUid = "memberUid"
 )
 
 var (
@@ -73,6 +105,7 @@ var ConfigurationFields = []field.SchemaField{
 	disableOperationalAttrsField,
 	disableUserAttributesField,
 	enableUserAttributesField,
+	groupMemberAttributeField,
 	filterField,
 }
 
@@ -186,12 +219,52 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 	rv.UserStatusAttributes = userStatusAttributes
 
+	groupMemberAttribute, err := normalizeGroupMemberAttribute(v)
+	if err != nil {
+		return nil, err
+	}
+	rv.GroupMemberAttribute = groupMemberAttribute
+
 	l.Info("baton-ldap: user status attribute definition",
 		zap.Strings("managed_attributes", userStatusAttributes.ManagedAttributes()),
 		zap.Any("disable_user_attributes", userStatusAttributes.Disabled),
 		zap.Any("enable_user_attributes", userStatusAttributes.Enabled))
 
+	l.Info("baton-ldap: group membership attribute",
+		zap.String(groupMemberAttributeField.FieldName, rv.EffectiveGroupMemberAttribute()))
+
 	return rv, nil
+}
+
+// normalizeGroupMemberAttribute reads the group-member-attribute field and
+// normalizes it to one of the canonical attribute names, or to the empty string
+// for the auto default.
+//
+// An empty value is auto, so an unset field, an explicit "auto" and a Config
+// built by a test that does not set the field are all the same thing. Anything
+// else is rejected instead of being degraded to auto: a typo must not silently
+// turn a pin off, which would leave the operator writing to an attribute they
+// did not choose while believing they had pinned it.
+func normalizeGroupMemberAttribute(v *viper.Viper) (string, error) {
+	raw := strings.TrimSpace(v.GetString(groupMemberAttributeField.FieldName))
+	switch {
+	case raw == "":
+		return "", nil
+	case strings.EqualFold(raw, GroupMemberAttributeAuto):
+		return "", nil
+	case strings.EqualFold(raw, GroupMemberAttributeMember):
+		return GroupMemberAttributeMember, nil
+	case strings.EqualFold(raw, GroupMemberAttributeUniqueMember):
+		return GroupMemberAttributeUniqueMember, nil
+	case strings.EqualFold(raw, GroupMemberAttributeMemberUid):
+		return GroupMemberAttributeMemberUid, nil
+	default:
+		return "", fmt.Errorf(
+			"%s: %q is not a group membership attribute; expected %s, %s, %s or %s",
+			groupMemberAttributeField.FieldName, raw,
+			GroupMemberAttributeAuto, GroupMemberAttributeMember,
+			GroupMemberAttributeUniqueMember, GroupMemberAttributeMemberUid)
+	}
 }
 
 // UserStatusAttributes is the normalized definition of which LDAP attribute
@@ -533,5 +606,21 @@ type Config struct {
 	DisableOperationalAttrs bool
 	InsecureSkipVerify      bool
 
+	// GroupMemberAttribute pins the LDAP attribute that group membership is
+	// written to. Empty (and GroupMemberAttributeAuto) means the attribute is
+	// learned per entry: see pkg/connector/group_membership.go.
+	GroupMemberAttribute string
+
 	UserStatusAttributes UserStatusAttributes
+}
+
+// EffectiveGroupMemberAttribute returns the value the connector acts on: the pin
+// when one is configured, "auto" otherwise. The stored field is empty for auto so
+// that a Config built without it -- which is every test helper and every
+// deployment that does not set the flag -- keeps the learning behavior.
+func (c *Config) EffectiveGroupMemberAttribute() string {
+	if c.GroupMemberAttribute == "" {
+		return GroupMemberAttributeAuto
+	}
+	return c.GroupMemberAttribute
 }
