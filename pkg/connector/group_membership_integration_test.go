@@ -314,5 +314,4 @@ func TestRfc2307bisCoexistGrantFollowsContent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, groupEntryValues(ctx, t, connector, coexistDN, attrGroupMemberPosix), "carol")
 	require.Contains(t, groupEntryValues(ctx, t, connector, coexistDN, attrGroupMember), fixtureBobDN)
-
 }

@@ -58,7 +58,7 @@ type groupMembershipState struct {
 	// current membership values, by attribute
 	member       []string
 	uniqueMember []string
-	memberUid    []string
+	memberUID    []string
 
 	// principalIn lists the membership attributes whose stored values name the
 	// principal, in documented order. Direct values only: a value that resolves to
@@ -160,7 +160,7 @@ func (s groupMembershipState) values(attr string) []string {
 	case attrGroupUniqueMember:
 		return s.uniqueMember
 	case attrGroupMemberPosix:
-		return s.memberUid
+		return s.memberUID
 	}
 	return nil
 }
@@ -379,13 +379,13 @@ func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipSt
 		objectClasses:   entry.GetEqualFoldAttributeValues("objectClass"),
 		member:          entry.GetEqualFoldAttributeValues(attrGroupMember),
 		uniqueMember:    entry.GetEqualFoldAttributeValues(attrGroupUniqueMember),
-		memberUid:       entry.GetEqualFoldAttributeValues(attrGroupMemberPosix),
+		memberUID:       entry.GetEqualFoldAttributeValues(attrGroupMemberPosix),
 		principalIn:     sortedByDocumentedOrder(attrs),
 		principalValues: matches,
 	}
 }
 
-// memberUidValue returns the memberUid value to write for the principal.
+// memberUIDValue returns the memberUid value to write for the principal.
 //
 // The entry decides the form. memberUid holds a login name and a directory may
 // store either the uid or the cn (findMember resolves both), so the connector
@@ -393,7 +393,7 @@ func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipSt
 // would leave a membership the group's own readers do not see. uid is preferred
 // when neither form is in evidence, and the first RDN value -- what the previous
 // implementation wrote unconditionally -- is the last resort.
-func memberUidValue(entry *ldap3.Entry, id principalIdentity) string {
+func memberUIDValue(entry *ldap3.Entry, id principalIdentity) string {
 	stored := entry.GetEqualFoldAttributeValues(attrGroupMemberPosix)
 	if id.uid != "" && containsFold(stored, id.uid) {
 		return id.uid
@@ -419,7 +419,7 @@ func membershipValue(entry *ldap3.Entry, id principalIdentity, attr string) ([]s
 	case attrGroupMember, attrGroupUniqueMember:
 		return []string{id.dn}, nil
 	case attrGroupMemberPosix:
-		value := memberUidValue(entry, id)
+		value := memberUIDValue(entry, id)
 		if value == "" {
 			return nil, fmt.Errorf("ldap-connector: cannot determine a memberUid value for %q", id.dn)
 		}

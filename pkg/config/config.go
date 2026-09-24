@@ -77,9 +77,9 @@ const (
 	// GroupMemberAttributeUniqueMember is the DN-valued attribute of
 	// groupOfUniqueNames.
 	GroupMemberAttributeUniqueMember = "uniqueMember"
-	// GroupMemberAttributeMemberUid is the login-name-valued attribute of
+	// GroupMemberAttributeMemberUID is the login-name-valued attribute of
 	// posixGroup.
-	GroupMemberAttributeMemberUid = "memberUid"
+	GroupMemberAttributeMemberUID = "memberUid"
 )
 
 var (
@@ -256,14 +256,14 @@ func normalizeGroupMemberAttribute(v *viper.Viper) (string, error) {
 		return GroupMemberAttributeMember, nil
 	case strings.EqualFold(raw, GroupMemberAttributeUniqueMember):
 		return GroupMemberAttributeUniqueMember, nil
-	case strings.EqualFold(raw, GroupMemberAttributeMemberUid):
-		return GroupMemberAttributeMemberUid, nil
+	case strings.EqualFold(raw, GroupMemberAttributeMemberUID):
+		return GroupMemberAttributeMemberUID, nil
 	default:
 		return "", fmt.Errorf(
 			"%s: %q is not a group membership attribute; expected %s, %s, %s or %s",
 			groupMemberAttributeField.FieldName, raw,
 			GroupMemberAttributeAuto, GroupMemberAttributeMember,
-			GroupMemberAttributeUniqueMember, GroupMemberAttributeMemberUid)
+			GroupMemberAttributeUniqueMember, GroupMemberAttributeMemberUID)
 	}
 }
 

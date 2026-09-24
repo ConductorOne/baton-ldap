@@ -45,8 +45,13 @@ func TestGroupMembershipPlan(t *testing.T) {
 			targets: []string{attrGroupMember},
 		},
 		{
-			name:    "principal in both attributes -> both targeted",
-			state:   groupMembershipState{objectClasses: ocs("groupOfNames", "posixGroup"), member: []string{"cn=a"}, memberUid: []string{"a"}, principalIn: []string{attrGroupMemberPosix, attrGroupMember}},
+			name: "principal in both attributes -> both targeted",
+			state: groupMembershipState{
+				objectClasses: ocs("groupOfNames", "posixGroup"),
+				member:        []string{"cn=a"},
+				memberUID:     []string{"a"},
+				principalIn:   []string{attrGroupMemberPosix, attrGroupMember},
+			},
 			present: true,
 			targets: []string{attrGroupMember, attrGroupMemberPosix},
 		},
@@ -67,12 +72,12 @@ func TestGroupMembershipPlan(t *testing.T) {
 		},
 		{
 			name:    "structural posixGroup uses memberUid",
-			state:   groupMembershipState{objectClasses: ocs("posixGroup"), memberUid: []string{"a"}},
+			state:   groupMembershipState{objectClasses: ocs("posixGroup"), memberUID: []string{"a"}},
 			targets: []string{attrGroupMemberPosix},
 		},
 		{
 			name:    "rfc2307bis coexist entry using memberUid follows its content",
-			state:   groupMembershipState{objectClasses: ocs("groupofnames", "posixgroup"), memberUid: []string{"a"}},
+			state:   groupMembershipState{objectClasses: ocs("groupofnames", "posixgroup"), memberUID: []string{"a"}},
 			targets: []string{attrGroupMemberPosix},
 		},
 		{
@@ -82,7 +87,7 @@ func TestGroupMembershipPlan(t *testing.T) {
 		},
 		{
 			name:    "diverged entry is ordered by the documented order, member first",
-			state:   groupMembershipState{objectClasses: ocs("groupofnames", "posixgroup"), member: []string{"cn=a"}, memberUid: []string{"b"}},
+			state:   groupMembershipState{objectClasses: ocs("groupofnames", "posixgroup"), member: []string{"cn=a"}, memberUID: []string{"b"}},
 			targets: []string{attrGroupMember, attrGroupMemberPosix},
 		},
 		{
@@ -170,14 +175,14 @@ func TestGroupMembershipPlanCasingInvariance(t *testing.T) {
 		require.Equal(t, []string{attrGroupMember, attrGroupUniqueMember, attrGroupMemberPosix}, empty.targets, "spelling %v", spelling)
 		require.True(t, empty.inferred, "spelling %v", spelling)
 
-		withMemberUid := planGroupMembership(groupMembershipState{objectClasses: spelling, memberUid: []string{"a"}})
-		require.Equal(t, []string{attrGroupMemberPosix}, withMemberUid.targets, "spelling %v", spelling)
-		require.False(t, withMemberUid.inferred, "spelling %v", spelling)
+		withMemberUID := planGroupMembership(groupMembershipState{objectClasses: spelling, memberUID: []string{"a"}})
+		require.Equal(t, []string{attrGroupMemberPosix}, withMemberUID.targets, "spelling %v", spelling)
+		require.False(t, withMemberUID.inferred, "spelling %v", spelling)
 
 		// A present membership is also spelling-independent, in both attributes.
 		present := planGroupMembership(groupMembershipState{
 			objectClasses: spelling,
-			memberUid:     []string{"a"},
+			memberUID:     []string{"a"},
 			principalIn:   []string{attrGroupMemberPosix},
 		})
 		require.True(t, present.present, "spelling %v", spelling)
@@ -401,7 +406,7 @@ func TestRevokeTargets(t *testing.T) {
 
 	state := groupMembershipState{
 		member:      []string{"cn=a,dc=example,dc=org", "cn=b,dc=example,dc=org"},
-		memberUid:   []string{"a"},
+		memberUID:   []string{"a"},
 		principalIn: []string{attrGroupMember, attrGroupMemberPosix},
 		principalValues: map[string][]string{
 			attrGroupMember:      {"cn=A,DC=Example,DC=Org"},
@@ -478,7 +483,7 @@ func TestPinnedGrant(t *testing.T) {
 	t.Run("the pinned values are the attributes this connector writes", func(t *testing.T) {
 		require.Equal(t, attrGroupMember, pinnedMemberAttribute(config.GroupMemberAttributeMember))
 		require.Equal(t, attrGroupUniqueMember, pinnedMemberAttribute(config.GroupMemberAttributeUniqueMember))
-		require.Equal(t, attrGroupMemberPosix, pinnedMemberAttribute(config.GroupMemberAttributeMemberUid))
+		require.Equal(t, attrGroupMemberPosix, pinnedMemberAttribute(config.GroupMemberAttributeMemberUID))
 	})
 
 	t.Run("a pin replaces the plan's candidates", func(t *testing.T) {
@@ -495,7 +500,7 @@ func TestPinnedGrant(t *testing.T) {
 		plan := planGroupMembership(groupMembershipState{
 			objectClasses: []string{"top", "groupOfNames", "posixGroup"},
 			member:        []string{"cn=a,dc=example,dc=org"},
-			memberUid:     []string{"a"},
+			memberUID:     []string{"a"},
 		})
 		targets, mode := plan.grantTargets("")
 		require.Equal(t, []string{attrGroupMember, attrGroupMemberPosix}, targets)
@@ -535,7 +540,7 @@ func TestPinnedGrant(t *testing.T) {
 // login names is written, and that a stored value in either form is matched
 // (and deleted) exactly as stored.
 func TestMemberUidForms(t *testing.T) {
-	entryWithMemberUid := func(values ...string) *ldap3.Entry {
+	entryWithMemberUID := func(values ...string) *ldap3.Entry {
 		return &ldap3.Entry{
 			DN: "cn=g,ou=groups,dc=example,dc=org",
 			Attributes: []*ldap3.EntryAttribute{
@@ -553,7 +558,7 @@ func TestMemberUidForms(t *testing.T) {
 	}
 
 	t.Run("the stored uid form is detected and deleted as stored", func(t *testing.T) {
-		entry := entryWithMemberUid("asmith")
+		entry := entryWithMemberUID("asmith")
 		matches := matchPrincipal(entry, principal)
 		require.Equal(t, []string{"asmith"}, matches[attrGroupMemberPosix])
 
@@ -563,51 +568,51 @@ func TestMemberUidForms(t *testing.T) {
 	})
 
 	t.Run("the stored cn form is detected and deleted as stored", func(t *testing.T) {
-		entry := entryWithMemberUid("Alice Smith")
+		entry := entryWithMemberUID("Alice Smith")
 		matches := matchPrincipal(entry, principal)
 		require.Equal(t, []string{"Alice Smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("matching ignores case", func(t *testing.T) {
-		entry := entryWithMemberUid("ASMITH", "alice smith")
+		entry := entryWithMemberUID("ASMITH", "alice smith")
 		matches := matchPrincipal(entry, principal)
 		require.Equal(t, []string{"ASMITH", "alice smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("a different member is not matched", func(t *testing.T) {
-		entry := entryWithMemberUid("bob")
+		entry := entryWithMemberUID("bob")
 		require.Empty(t, matchPrincipal(entry, principal))
 		require.Empty(t, membershipState(entry, principal).principalIn)
 	})
 
 	t.Run("the form the entry already uses is written", func(t *testing.T) {
-		require.Equal(t, "Alice Smith", memberUidValue(entryWithMemberUid("Alice Smith"), principal))
-		require.Equal(t, "asmith", memberUidValue(entryWithMemberUid("asmith"), principal))
+		require.Equal(t, "Alice Smith", memberUIDValue(entryWithMemberUID("Alice Smith"), principal))
+		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID("asmith"), principal))
 	})
 
 	t.Run("an entry with no memberUid values gets the uid", func(t *testing.T) {
-		require.Equal(t, "asmith", memberUidValue(entryWithMemberUid(), principal))
+		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID(), principal))
 	})
 
 	t.Run("a principal with no uid falls back to the first RDN value", func(t *testing.T) {
 		noUID := principalIdentity{dn: principal.dn, cn: "Alice Smith", rdn: "Alice Smith"}
-		require.Equal(t, "Alice Smith", memberUidValue(entryWithMemberUid(), noUID))
+		require.Equal(t, "Alice Smith", memberUIDValue(entryWithMemberUID(), noUID))
 	})
 
 	t.Run("value selection for the DN-valued attributes is the principal's DN", func(t *testing.T) {
-		values, err := membershipValue(entryWithMemberUid(), principal, attrGroupMember)
+		values, err := membershipValue(entryWithMemberUID(), principal, attrGroupMember)
 		require.NoError(t, err)
 		require.Equal(t, []string{principal.dn}, values)
 
-		values, err = membershipValue(entryWithMemberUid(), principal, attrGroupUniqueMember)
+		values, err = membershipValue(entryWithMemberUID(), principal, attrGroupUniqueMember)
 		require.NoError(t, err)
 		require.Equal(t, []string{principal.dn}, values)
 
-		values, err = membershipValue(entryWithMemberUid(), principal, attrGroupMemberPosix)
+		values, err = membershipValue(entryWithMemberUID(), principal, attrGroupMemberPosix)
 		require.NoError(t, err)
 		require.Equal(t, []string{"asmith"}, values)
 
-		_, err = membershipValue(entryWithMemberUid(), principal, "memberOf")
+		_, err = membershipValue(entryWithMemberUID(), principal, "memberOf")
 		require.Error(t, err)
 	})
 }
@@ -753,9 +758,9 @@ func TestMembershipBlastRadiusReport(t *testing.T) {
 		classes []string
 	}
 	type content struct {
-		name    string
-		members []string
-		uids    []string
+		name            string
+		members         []string
+		memberUIDValues []string
 	}
 
 	classSets := []classSet{
@@ -768,10 +773,10 @@ func TestMembershipBlastRadiusReport(t *testing.T) {
 		{name: "groupOfNames+ipausergroup (FreeIPA)", classes: []string{"top", "groupofnames", "ipausergroup", "posixgroup"}},
 	}
 	contents := []content{
-		{name: "empty", members: nil, uids: nil},
+		{name: "empty"},
 		{name: "member populated", members: []string{"cn=other,ou=users,dc=example,dc=org"}},
-		{name: "memberUid populated", uids: []string{"other"}},
-		{name: "both populated", members: []string{"cn=other,ou=users,dc=example,dc=org"}, uids: []string{"other"}},
+		{name: "memberUid populated", memberUIDValues: []string{"other"}},
+		{name: "both populated", members: []string{"cn=other,ou=users,dc=example,dc=org"}, memberUIDValues: []string{"other"}},
 	}
 
 	var table strings.Builder
@@ -784,7 +789,7 @@ func TestMembershipBlastRadiusReport(t *testing.T) {
 				objectClasses: cs.classes,
 				member:        c.members,
 				uniqueMember:  nil,
-				memberUid:     c.uids,
+				memberUID:     c.memberUIDValues,
 			})
 
 			newPlan := "error (dynamic)"
@@ -798,8 +803,8 @@ func TestMembershipBlastRadiusReport(t *testing.T) {
 				newPlan = "write " + strings.Join(plan.targets, ", ")
 			}
 
-			table.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n",
-				cs.name, c.name, legacyMembershipAttribute(cs.classes), newPlan))
+			fmt.Fprintf(&table, "| `%s` | %s | %s | %s |\n",
+				cs.name, c.name, legacyMembershipAttribute(cs.classes), newPlan)
 		}
 	}
 

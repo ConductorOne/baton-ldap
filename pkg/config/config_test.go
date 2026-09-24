@@ -363,7 +363,7 @@ func TestNewGroupMemberAttribute(t *testing.T) {
 		{
 			name: "memberUid is accepted",
 			yaml: "group-member-attribute: memberUid\n",
-			want: GroupMemberAttributeMemberUid,
+			want: GroupMemberAttributeMemberUID,
 		},
 		{
 			name: "casing is normalized to the canonical attribute name",
@@ -373,7 +373,7 @@ func TestNewGroupMemberAttribute(t *testing.T) {
 		{
 			name: "surrounding whitespace is trimmed",
 			yaml: "group-member-attribute: \"  memberUid  \"\n",
-			want: GroupMemberAttributeMemberUid,
+			want: GroupMemberAttributeMemberUID,
 		},
 	}
 
@@ -404,5 +404,5 @@ func TestNewGroupMemberAttribute(t *testing.T) {
 func TestEffectiveGroupMemberAttribute(t *testing.T) {
 	require.Equal(t, GroupMemberAttributeAuto, (&Config{}).EffectiveGroupMemberAttribute())
 	require.Equal(t, GroupMemberAttributeAuto, (&Config{GroupMemberAttribute: GroupMemberAttributeAuto}).EffectiveGroupMemberAttribute())
-	require.Equal(t, GroupMemberAttributeMemberUid, (&Config{GroupMemberAttribute: GroupMemberAttributeMemberUid}).EffectiveGroupMemberAttribute())
+	require.Equal(t, GroupMemberAttributeMemberUID, (&Config{GroupMemberAttribute: GroupMemberAttributeMemberUID}).EffectiveGroupMemberAttribute())
 }
