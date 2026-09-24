@@ -399,8 +399,9 @@ func TestMemberUIDCollisionGrantWritesTheResolvedName(t *testing.T) {
 // too, instead of answering already-revoked.
 //
 // The nested member is what lets the same fixture cover the walk *finding* an
-// inherited source at this size, and the count assertions are what make the "one
-// search per member" behavior a failure again if it comes back.
+// inherited source at this size. What this test cannot show is *how many searches*
+// the guard made -- it counts members, not searches -- so a return to the
+// per-member walk would show up here only if it also broke one of these outcomes.
 func TestLargeGroupRevokeIsNotBlockedByTheInheritanceGuard(t *testing.T) {
 	ctx := t.Context()
 	gb, connector := groupMembershipFixture(ctx, t)

@@ -763,13 +763,15 @@ func TestGrantSourcesAreOnlyHints(t *testing.T) {
 		require.Empty(t, namedInheritedSources(grantWith(map[string]bool{own: true}), own))
 	})
 
-	t.Run("a direct source on this group alone does not stop the walk being needed", func(t *testing.T) {
-		// The value of the shortcut that used to live here is exactly what makes it
-		// unsafe: it answered from a snapshot. The walk is the authority.
-		grant := grantWith(map[string]bool{own: true})
-		require.Empty(t, namedInheritedSources(grant, own))
-		require.False(t, groupHoldsPrincipal(&ldap3.Entry{}, principalIdentity{dn: "cn=x"}),
-			"the walk's own question is about the directory, not the grant")
+	t.Run("this group's own entitlement named direct yields no source to check", func(t *testing.T) {
+		// This is the input the removed shortcut answered from. Nothing about the
+		// grant may skip the walk, and the walk itself needs a directory, so the
+		// property is covered end to end instead: with this exact grant, a revoke of
+		// an inherited membership returns "the membership is inherited via ..." on
+		// this head and returned a false success while the shortcut existed (both
+		// transcripts in the pull request comment). There is no unit seam for it --
+		// groupResourceType holds a concrete client.
+		require.Empty(t, namedInheritedSources(grantWith(map[string]bool{own: true}), own))
 	})
 
 	t.Run("another entitlement's source yields its DN to check live", func(t *testing.T) {
@@ -848,33 +850,43 @@ func TestInheritedWalkFilters(t *testing.T) {
 		resolvedNames: []string{"asmith", "Alice Smith"},
 	}
 
-	t.Run("the DN filter names the principal's DN in both DN-valued attributes", func(t *testing.T) {
-		filter := directHolderDNFilter(id)
+	t.Run("the strict filter names the DN and the memberUid forms", func(t *testing.T) {
+		filter := directHolderStrictFilter(id)
 		require.Equal(t,
-			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org))",
+			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org)"+
+				"(memberUid=asmith)(memberUid=Alice Smith))",
 			filter)
 		_, err := ldap3.CompileFilter(filter)
 		require.NoError(t, err)
 	})
 
-	t.Run("the name filter names every resolved form in every attribute", func(t *testing.T) {
-		filter := directHolderNameFilter(id)
+	t.Run("the name-in-DN filter is the only one that may be refused", func(t *testing.T) {
+		filter := directHolderNameInDNFilter(id)
 		require.Equal(t,
-			"(|(member=asmith)(uniqueMember=asmith)(memberUid=asmith)"+
-				"(member=Alice Smith)(uniqueMember=Alice Smith)(memberUid=Alice Smith))",
+			"(|(member=asmith)(uniqueMember=asmith)(member=Alice Smith)(uniqueMember=Alice Smith))",
 			filter)
 		_, err := ldap3.CompileFilter(filter)
 		require.NoError(t, err)
+	})
+
+	t.Run("the strict filter never asserts a bare name against a DN attribute", func(t *testing.T) {
+		// This is the split's whole point: a server that refuses a name-as-DN
+		// assertion refuses the tolerated search alone, so the memberUid half of the
+		// answer survives.
+		strict := directHolderStrictFilter(id)
+		require.NotContains(t, strict, "(member=asmith)")
+		require.NotContains(t, strict, "(uniqueMember=Alice Smith)")
+		require.Contains(t, directHolderNameInDNFilter(id), "(member=asmith)")
 	})
 
 	t.Run("a principal with no resolved names has no name filter to send", func(t *testing.T) {
-		require.Empty(t, directHolderNameFilter(principalIdentity{dn: id.dn}))
+		require.Empty(t, directHolderNameInDNFilter(principalIdentity{dn: id.dn}))
 	})
 
 	t.Run("filter values are escaped", func(t *testing.T) {
 		for _, filter := range []string{
-			directHolderDNFilter(principalIdentity{dn: "cn=a*b(c),ou=users,dc=example,dc=org"}),
-			directHolderNameFilter(principalIdentity{resolvedNames: []string{"a*b(c)"}}),
+			directHolderStrictFilter(principalIdentity{dn: "cn=a*b(c),ou=users,dc=example,dc=org"}),
+			directHolderNameInDNFilter(principalIdentity{resolvedNames: []string{"a*b(c)"}}),
 		} {
 			_, err := ldap3.CompileFilter(filter)
 			require.NoError(t, err)

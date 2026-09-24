@@ -901,38 +901,53 @@ func (g *groupResourceType) inheritedVia(ctx context.Context, l *zap.Logger, gro
 	return g.inheritedViaTraversal(ctx, l, groupDN, id)
 }
 
-// directHolderDNFilter matches the groups whose DN-valued attributes hold the
-// principal's DN.
-func directHolderDNFilter(id principalIdentity) string {
-	return "(|" +
-		fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(id.dn)) +
-		fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(id.dn)) +
-		")"
-}
-
-// directHolderNameFilter matches the groups naming the principal by one of the
-// login names that resolve to it.
-//
-// It is a separate search from the DN one on purpose. A login name is not valid DN
-// syntax, and while RFC 4511 makes an invalid assertion Undefined -- which
-// OpenLDAP honours, matching the rest of the OR -- a stricter server (Active
-// Directory, and possibly 389 DS) may reject the whole filter with 21 or 34. Sent
-// on its own, such a rejection costs this half of the search and cannot take the DN
-// result down with it: see isFilterSyntaxRejection.
-func directHolderNameFilter(id principalIdentity) string {
-	if len(id.resolvedNames) == 0 {
-		return ""
+// directHolderStrictFilter matches the groups naming the principal in a way every
+// server can be asked about: the principal's DN in the DN-valued attributes, and
+// each login name that resolves to it in memberUid, which is the attribute that
+// holds names.
+func directHolderStrictFilter(id principalIdentity) string {
+	parts := []string{
+		fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(id.dn)),
+		fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(id.dn)),
 	}
-
-	parts := make([]string, 0, len(id.resolvedNames)*len(membershipAttrs))
 	for _, name := range id.resolvedNames {
-		for _, attr := range membershipAttrs {
-			parts = append(parts, fmt.Sprintf("(%s=%s)", attr, ldap3.EscapeFilter(name)))
-		}
+		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupMemberPosix, ldap3.EscapeFilter(name)))
 	}
 
 	return "(|" + strings.Join(parts, "") + ")"
 }
+
+// directHolderNameInDNFilter matches the groups naming the principal by a login
+// name inside a DN-valued attribute.
+//
+// It is a search of its own, and the only one whose filter may be refused, because
+// a login name is not valid DN syntax. RFC 4511 makes an invalid assertion
+// Undefined -- OpenLDAP honours that, matching through the rest of an OR -- but a
+// stricter server is entitled to reject the whole filter with 21 or 34, and mixing
+// these clauses into the strict search would cost the memberUid half of the answer
+// on exactly those servers. Tolerating their rejection loses nothing: a server that
+// refuses a bare name in a filter also refuses it on write, so a group cannot hold
+// the principal that way there.
+func directHolderNameInDNFilter(id principalIdentity) string {
+	if len(id.resolvedNames) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(id.resolvedNames)*2)
+	for _, name := range id.resolvedNames {
+		parts = append(parts,
+			fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(name)),
+			fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(name)))
+	}
+
+	return "(|" + strings.Join(parts, "") + ")"
+}
+
+// holderFilterChunk bounds how many group DNs one holder search names. The frontier
+// can hold a page's worth of groups, and naming all of them in one filter would
+// reach a size a server may refuse -- loudly, as a failed search rather than a
+// wrong answer, but still a failed walk.
+const holderFilterChunk = 100
 
 // holderFilter matches the groups that hold any of groupDNS as a member, which is
 // how the walk climbs from the principal to a group that contains it.
@@ -966,15 +981,15 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 		return "", false, nil
 	}
 
-	holdings, truncated, err := g.searchHolderFilter(ctx, directHolderDNFilter(id), false)
+	holdings, truncated, err := g.searchHolderFilter(ctx, directHolderStrictFilter(id), false)
 	if err != nil {
 		return "", false, err
 	}
 
-	// The name half is a separate search so that a server which refuses a
-	// name-as-DN assertion cannot cost us the DN half's answer.
-	if nameFilter := directHolderNameFilter(id); nameFilter != "" {
-		named, nameTruncated, err := g.searchHolderFilter(ctx, nameFilter, true)
+	// The name-as-DN clauses are a separate search so that a server which refuses
+	// them cannot cost us the answer the strict search already gave.
+	if nameInDNFilter := directHolderNameInDNFilter(id); nameInDNFilter != "" {
+		named, nameTruncated, err := g.searchHolderFilter(ctx, nameInDNFilter, true)
 		if err != nil {
 			return "", false, err
 		}
@@ -1005,12 +1020,16 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 			break
 		}
 
-		parents, pageFilled, err := g.searchHolderFilter(ctx, holderFilter(frontier), false)
-		if err != nil {
-			return "", false, err
-		}
-		if pageFilled {
-			truncated = true
+		var parents []*ldap3.Entry
+		for start := 0; start < len(frontier); start += holderFilterChunk {
+			chunk, pageFilled, err := g.searchHolderFilter(ctx, holderFilter(frontier[start:min(start+holderFilterChunk, len(frontier))]), false)
+			if err != nil {
+				return "", false, err
+			}
+			parents = append(parents, chunk...)
+			if pageFilled {
+				truncated = true
+			}
 		}
 
 		next := make([]string, 0, len(parents))
@@ -1074,7 +1093,11 @@ func (g *groupResourceType) searchHolderFilter(ctx context.Context, filter strin
 		)
 		if err != nil {
 			if isNotFound(err) {
-				break
+				// No such search base is "nothing matched", not "the walk stopped":
+				// returning what has been read so far with the limit flag set would
+				// report a truncated walk, which the caller turns into a
+				// non-retryable error for a group that simply has no nesting.
+				return entries, false, nil
 			}
 			if tolerateSyntaxRejection && isFilterSyntaxRejection(err) {
 				return entries, false, nil
