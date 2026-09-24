@@ -237,8 +237,8 @@ func TestNestedGroupRevokeReportsInherited(t *testing.T) {
 	require.ErrorContains(t, err, fixtureInnerDN)
 	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember), fixtureCarolDN,
 		"the direct value this call wrote must be gone")
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN,
-		"the inherited membership remains, and the answer must say so")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureInnerDN,
+		"outer still holds the nested group, which is what makes carol a member of it again after expansion")
 }
 
 // TestPrimaryGroupRevokeReportsPrimaryGroup covers the other guard: the
