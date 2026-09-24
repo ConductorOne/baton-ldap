@@ -938,11 +938,11 @@ func directHolderFilter(id principalIdentity) string {
 	return "(|" + strings.Join(parts, "") + ")"
 }
 
-// holderFilter matches the groups that hold any of groupDNs as a member, which is
+// holderFilter matches the groups that hold any of groupDNS as a member, which is
 // how the walk climbs from the principal to a group that contains it.
-func holderFilter(groupDNs []string) string {
-	parts := make([]string, 0, len(groupDNs)*2)
-	for _, dn := range groupDNs {
+func holderFilter(groupDNS []string) string {
+	parts := make([]string, 0, len(groupDNS)*2)
+	for _, dn := range groupDNS {
 		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(dn)))
 		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(dn)))
 	}

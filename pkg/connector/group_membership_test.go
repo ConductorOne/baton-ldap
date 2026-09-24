@@ -206,12 +206,6 @@ func resolvingIdentity(id principalIdentity) principalIdentity {
 	return id
 }
 
-// identityClaimedByAnotherEntry returns the identity with no resolved names: every
-// name it carries resolves to a different entry, or to nothing.
-func identityClaimedByAnotherEntry(id principalIdentity) principalIdentity {
-	id.resolvedNames = nil
-	return id
-}
 
 // fakeEffects records what the loops did and answers with what the test says a
 // directory would have answered.
