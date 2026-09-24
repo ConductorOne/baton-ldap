@@ -856,10 +856,12 @@ func TestInheritedWalkFilters(t *testing.T) {
 		resolvedNames: []string{"asmith", "Alice Smith"},
 	}
 
-	t.Run("the direct holder filter names every resolved form", func(t *testing.T) {
+	t.Run("the direct holder filter names every resolved form in every attribute", func(t *testing.T) {
 		filter := directHolderFilter(id)
 		require.Equal(t,
-			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org)(memberUid=asmith)(memberUid=Alice Smith))",
+			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org)"+
+				"(member=asmith)(uniqueMember=asmith)(memberUid=asmith)"+
+				"(member=Alice Smith)(uniqueMember=Alice Smith)(memberUid=Alice Smith))",
 			filter)
 		_, err := ldap3.CompileFilter(filter)
 		require.NoError(t, err)

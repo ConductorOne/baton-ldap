@@ -917,15 +917,22 @@ func (g *groupResourceType) inheritedVia(ctx context.Context, l *zap.Logger, gro
 }
 
 // directHolderFilter matches the groups whose own attributes name the principal:
-// a DN-valued attribute holding the principal's DN, or memberUid holding one of the
-// login names that resolve to it.
+// the DN-valued attributes holding the principal's DN, and any membership attribute
+// holding one of the login names that resolve to it.
+//
+// The login names are looked for in the DN-valued attributes as well as memberUid:
+// the matcher accepts a bare name stored in member or uniqueMember (a directory
+// with schema checking off, where the read path resolves it through findMember), so
+// the search that feeds the matcher has to consider it too.
 func directHolderFilter(id principalIdentity) string {
 	parts := []string{
 		fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(id.dn)),
 		fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(id.dn)),
 	}
 	for _, name := range id.resolvedNames {
-		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupMemberPosix, ldap3.EscapeFilter(name)))
+		for _, attr := range membershipAttrs {
+			parts = append(parts, fmt.Sprintf("(%s=%s)", attr, ldap3.EscapeFilter(name)))
+		}
 	}
 
 	return "(|" + strings.Join(parts, "") + ")"
