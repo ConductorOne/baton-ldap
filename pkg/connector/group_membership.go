@@ -425,11 +425,6 @@ func membershipValue(entry *ldap3.Entry, id principalIdentity, attr string) ([]s
 	}
 }
 
-// membershipEffectValue returns the values to add for attr on this group.
-func (g *groupResourceType) membershipEffectValue(group *ldap3.Entry, id principalIdentity, attr string) ([]string, error) {
-	return membershipValue(group, id, attr)
-}
-
 // membershipDeletion names one membership attribute and the exact stored values to
 // remove from it.
 type membershipDeletion struct {
@@ -469,7 +464,7 @@ func (g *groupResourceType) groupEffects(ctx context.Context, l *zap.Logger, gro
 
 	return membershipEffects{
 		value: func(_ context.Context, attr string) ([]string, error) {
-			return g.membershipEffectValue(group, id, attr)
+			return membershipValue(group, id, attr)
 		},
 		add: func(ctx context.Context, attr string, values []string) (bool, error) {
 			req := ldap3.NewModifyRequest(groupDN, nil)
@@ -645,14 +640,14 @@ func grantMembership(
 // absent would fail the whole request with 16. That is why the values are the
 // stored strings and not a normalized form of them.
 func revokeDeletions(plan groupMembershipPlan, values map[string][]string) []membershipDeletion {
-	delete := make([]membershipDeletion, 0, len(plan.targets))
+	deletions := make([]membershipDeletion, 0, len(plan.targets))
 	for _, attr := range plan.targets {
 		if len(values[attr]) == 0 {
 			continue
 		}
-		delete = append(delete, membershipDeletion{attr: attr, values: values[attr]})
+		deletions = append(deletions, membershipDeletion{attr: attr, values: values[attr]})
 	}
-	return delete
+	return deletions
 }
 
 // revokeMembership performs the single atomic delete.
@@ -662,7 +657,7 @@ func revokeDeletions(plan groupMembershipPlan, values map[string][]string) []mem
 // was decided from is out of date. Erroring out on that would be wrong (the
 // membership may already be gone) and reporting success would be wrong too (it
 // may have moved), so the caller re-reads and decides from the new state.
-func revokeMembership(ctx context.Context, l *zap.Logger, deletions []membershipDeletion, effects membershipEffects) (stale bool, err error) {
+func revokeMembership(ctx context.Context, l *zap.Logger, deletions []membershipDeletion, effects membershipEffects) (bool, error) {
 	removed, err := effects.remove(ctx, deletions)
 	switch {
 	case err == nil && removed:
