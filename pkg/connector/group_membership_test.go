@@ -206,7 +206,6 @@ func resolvingIdentity(id principalIdentity) principalIdentity {
 	return id
 }
 
-
 // fakeEffects records what the loops did and answers with what the test says a
 // directory would have answered.
 type fakeEffects struct {
@@ -731,17 +730,20 @@ func TestRevokeOutcome(t *testing.T) {
 	})
 }
 
-// TestGrantIsDirectOnly covers the one thing the received grant's Sources are used
-// for: the negative case they can settle without a search. They are never used to
-// name a source, because they come from the last sync -- a nested membership
-// removed outside C1 would otherwise produce a permanent "inherited via B" error
-// for a membership that no longer exists.
-func TestGrantIsDirectOnly(t *testing.T) {
-	const ownEntitlement = "group:cn=outer,ou=groups,dc=example,dc=org:member"
-	const subgroupEntitlement = "group:cn=inner,ou=groups,dc=example,dc=org:member"
+// TestGrantSourcesAreOnlyHints pins what the grant's Sources may and may not be
+// used for.
+//
+// They are never a reason to skip the walk. A grant naming only this group's own
+// entitlement as its single direct source was once taken as proof that the
+// membership is not inherited, which is a false success the moment an inherited
+// membership is added outside C1 after the sync that produced the snapshot. The
+// walk runs whatever they say, and they are consulted only to name a source that is
+// then checked live.
+func TestGrantSourcesAreOnlyHints(t *testing.T) {
+	const own = "group:cn=outer,ou=groups,dc=example,dc=org:member"
 
 	grantWith := func(sources map[string]bool) *v2.Grant {
-		rv := &v2.Grant{Entitlement: &v2.Entitlement{Id: ownEntitlement}}
+		rv := &v2.Grant{Entitlement: &v2.Entitlement{Id: own}}
 		if sources == nil {
 			return rv
 		}
@@ -753,32 +755,28 @@ func TestGrantIsDirectOnly(t *testing.T) {
 		return rv
 	}
 
-	t.Run("no sources answers nothing, so the walk decides", func(t *testing.T) {
-		require.False(t, grantIsDirectOnly(grantWith(nil)))
+	t.Run("no sources names nothing", func(t *testing.T) {
+		require.Empty(t, namedInheritedSources(grantWith(nil), own))
 	})
 
-	t.Run("this entitlement as the only direct source is not inherited", func(t *testing.T) {
-		require.True(t, grantIsDirectOnly(grantWith(map[string]bool{ownEntitlement: true})))
+	t.Run("this group's own entitlement is not a source to name", func(t *testing.T) {
+		require.Empty(t, namedInheritedSources(grantWith(map[string]bool{own: true}), own))
 	})
 
-	t.Run("another entitlement contributing means the walk has to run", func(t *testing.T) {
-		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{subgroupEntitlement: false})))
+	t.Run("a direct source on this group alone does not stop the walk being needed", func(t *testing.T) {
+		// The value of the shortcut that used to live here is exactly what makes it
+		// unsafe: it answered from a snapshot. The walk is the authority.
+		grant := grantWith(map[string]bool{own: true})
+		require.Empty(t, namedInheritedSources(grant, own))
+		require.False(t, groupHoldsPrincipal(&ldap3.Entry{}, principalIdentity{dn: "cn=x"}),
+			"the walk's own question is about the directory, not the grant")
 	})
 
-	t.Run("a direct source alongside another one is not direct-only", func(t *testing.T) {
-		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{subgroupEntitlement: false, ownEntitlement: true})))
-	})
-
-	t.Run("this entitlement named as not direct leaves the walk to decide", func(t *testing.T) {
-		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{ownEntitlement: false})))
-	})
-
-	t.Run("a grant without an entitlement id is never direct-only", func(t *testing.T) {
-		require.False(t, grantIsDirectOnly(&v2.Grant{
-			Sources: &v2.GrantSources{Sources: map[string]*v2.GrantSources_GrantSource{
-				ownEntitlement: {IsDirect: true},
-			}},
-		}))
+	t.Run("another entitlement's source yields its DN to check live", func(t *testing.T) {
+		require.Equal(t, []string{"cn=inner,ou=groups,dc=example,dc=org"},
+			namedInheritedSources(grantWith(map[string]bool{
+				"group:cn=inner,ou=groups,dc=example,dc=org:member": false,
+			}), own))
 	})
 }
 
@@ -837,10 +835,10 @@ func TestNamedInheritedSources(t *testing.T) {
 	})
 }
 
-// TestInheritedWalkFilters covers the two filters the walk issues. The walk must
-// reach the directory with a filter that names the principal's own forms (a
-// memberUid value is a login name, not a DN) and with the group classes, so that a
-// group of ten thousand users costs the same as a group of two.
+// TestInheritedWalkFilters covers the walk's filters and the two ways it keeps a
+// name assertion from costing the DN answer: the two halves are separate searches,
+// and a filter the server refuses as syntactically invalid is a miss rather than a
+// failure.
 func TestInheritedWalkFilters(t *testing.T) {
 	id := principalIdentity{
 		dn:            "cn=alice smith,ou=users,dc=example,dc=org",
@@ -850,22 +848,38 @@ func TestInheritedWalkFilters(t *testing.T) {
 		resolvedNames: []string{"asmith", "Alice Smith"},
 	}
 
-	t.Run("the direct holder filter names every resolved form in every attribute", func(t *testing.T) {
-		filter := directHolderFilter(id)
+	t.Run("the DN filter names the principal's DN in both DN-valued attributes", func(t *testing.T) {
+		filter := directHolderDNFilter(id)
 		require.Equal(t,
-			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org)"+
-				"(member=asmith)(uniqueMember=asmith)(memberUid=asmith)"+
+			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org))",
+			filter)
+		_, err := ldap3.CompileFilter(filter)
+		require.NoError(t, err)
+	})
+
+	t.Run("the name filter names every resolved form in every attribute", func(t *testing.T) {
+		filter := directHolderNameFilter(id)
+		require.Equal(t,
+			"(|(member=asmith)(uniqueMember=asmith)(memberUid=asmith)"+
 				"(member=Alice Smith)(uniqueMember=Alice Smith)(memberUid=Alice Smith))",
 			filter)
 		_, err := ldap3.CompileFilter(filter)
 		require.NoError(t, err)
 	})
 
-	t.Run("a principal with no resolved names is only looked for by DN", func(t *testing.T) {
-		filter := directHolderFilter(principalIdentity{dn: id.dn})
-		require.NotContains(t, filter, attrGroupMemberPosix)
-		_, err := ldap3.CompileFilter(filter)
-		require.NoError(t, err)
+	t.Run("a principal with no resolved names has no name filter to send", func(t *testing.T) {
+		require.Empty(t, directHolderNameFilter(principalIdentity{dn: id.dn}))
+	})
+
+	t.Run("filter values are escaped", func(t *testing.T) {
+		for _, filter := range []string{
+			directHolderDNFilter(principalIdentity{dn: "cn=a*b(c),ou=users,dc=example,dc=org"}),
+			directHolderNameFilter(principalIdentity{resolvedNames: []string{"a*b(c)"}}),
+		} {
+			_, err := ldap3.CompileFilter(filter)
+			require.NoError(t, err)
+			require.Contains(t, filter, `\2a`)
+		}
 	})
 
 	t.Run("the holder filter names both DN-valued attributes for every group", func(t *testing.T) {
@@ -878,12 +892,30 @@ func TestInheritedWalkFilters(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("filter values are escaped", func(t *testing.T) {
-		filter := directHolderFilter(principalIdentity{dn: "cn=a*b(c),ou=users,dc=example,dc=org"})
-		_, err := ldap3.CompileFilter(filter)
-		require.NoError(t, err)
-		require.Contains(t, filter, `\2a`)
+	t.Run("a filter the server refuses as invalid syntax is a miss, not a failure", func(t *testing.T) {
+		require.True(t, isFilterSyntaxRejection(ldapCodeError(ldap3.LDAPResultInvalidAttributeSyntax, "invalid assertion")))
+		require.True(t, isFilterSyntaxRejection(ldapCodeError(ldap3.LDAPResultInvalidDNSyntax, "not a DN")))
+		require.False(t, isFilterSyntaxRejection(ldapCodeError(ldap3.LDAPResultObjectClassViolation, "other")))
+		require.False(t, isFilterSyntaxRejection(nil))
 	})
+}
+
+// TestDNComparisonKey covers the key the walk compares DNs by: canonical, and
+// lowercased, because CanonicalizeDN lowercases a value only for the attribute types
+// in caseInsensitiveAttrs and DN matching itself is case-insensitive.
+func TestDNComparisonKey(t *testing.T) {
+	require.Equal(t,
+		dnKey("CN=Alice,OU=Users,DC=Example,DC=Org"),
+		dnKey("cn=alice,ou=users,dc=example,dc=org"))
+
+	// A type outside caseInsensitiveAttrs keeps its case through CanonicalizeDN, so
+	// without the lowercasing these two would not match.
+	require.Equal(t,
+		dnKey("EmployeeNumber=ABC,ou=users,dc=example,dc=org"),
+		dnKey("employeeNumber=abc,ou=users,dc=example,dc=org"))
+
+	// A value that is not a DN has no key at all.
+	require.Empty(t, dnKey("asmith"))
 }
 
 // TestInheritedTraversalTruncation covers the decision side of a walk that could

@@ -111,7 +111,7 @@ dn: cn=big,ou=groups,dc=example,dc=org
 objectclass: groupOfNames
 objectclass: top
 cn: big
-description: 60 members, no nesting
+description: 60 user members and one nested group, so the walk's finding path is covered at scale too
 member: cn=bulk00,ou=users,dc=example,dc=org
 member: cn=bulk01,ou=users,dc=example,dc=org
 member: cn=bulk02,ou=users,dc=example,dc=org
@@ -172,6 +172,7 @@ member: cn=bulk56,ou=users,dc=example,dc=org
 member: cn=bulk57,ou=users,dc=example,dc=org
 member: cn=bulk58,ou=users,dc=example,dc=org
 member: cn=bulk59,ou=users,dc=example,dc=org
+member: cn=bigsub,ou=groups,dc=example,dc=org
 
 dn: cn=bulk00,ou=users,dc=example,dc=org
 objectclass: inetOrgPerson
@@ -592,4 +593,11 @@ objectclass: top
 cn: bulk59
 sn: Bulk59
 uid: bulk59
+
+# A nested group, held by cn=big above: the large group's inheritance case.
+dn: cn=bigsub,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: bigsub
+member: cn=carol,ou=users,dc=example,dc=org
 
