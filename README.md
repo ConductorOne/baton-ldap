@@ -43,6 +43,7 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 | `--disable-user-attributes` | `BATON_DISABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as disabled, for example `--disable-user-attributes revoke=Y`. Unset by default. See [User enable/disable attributes](#user-enabledisable-attributes). |
 | `--enable-user-attributes` | `BATON_ENABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as enabled, for example `--enable-user-attributes revoke=N`. Unset by default. When both directions are configured they must name the same attributes. |
 | `--provisioning` | `BATON_PROVISIONING` |  **optional** Enable Provisioning of Groups by `baton-ldap`. `true` or `false`.  Defaults to `false` |
+| `--group-member-attribute` | `BATON_GROUP_MEMBER_ATTRIBUTE` |  **optional** Which LDAP attribute to write group membership to: `auto` (default), `member`, `uniqueMember` or `memberUid`. See [Group membership attribute](#group-membership-attribute). |
 
 Use `baton-ldap --help` to see all configuration flags and environment variables.
 
@@ -276,6 +277,74 @@ registration is conditional on `--disable-user-attributes` being set.
 
 # Developing baton-ldap
 
+## Group membership attribute
+
+A group's membership can live in `member` (a DN), `uniqueMember` (a DN) or `memberUid` (a login
+name). Which one it is cannot be decided from the entry's object classes: `posixGroup` is STRUCTURAL
+under RFC 2307 (OpenLDAP's `nis.schema`, so `{posixGroup, groupOfNames}` is rejected there) but
+AUXILIARY under rfc2307bis (which is what 389 DS ships by default since 1.4 and what FreeIPA uses),
+and a client such as SSSD picks the attribute it reads with its own `ldap_schema` setting regardless
+of what the server has loaded.
+
+So the connector observes the group entry and lets the server be the authority:
+
+1. **Read.** An entry carrying `groupOfURLs` is dynamic (its members come from `memberURL`) and is
+   never written. Otherwise the entry's own values are examined: whichever membership attributes
+   already hold values are the ones this directory uses, and all of them are maintained when the
+   entry has diverged. Only when the entry holds no membership at all do the object classes decide,
+   as an ordered guess: `groupOfUniqueNames` alone tries `uniqueMember` first, `posixGroup` without a
+   DN group class tries `memberUid` first, everything else tries `member` first.
+2. **Write.** One attribute per request, because an LDAP modify naming two attributes is rolled back
+   as a whole when either value already exists. A rejected attribute (result 65 objectClassViolation
+   or 17 undefinedAttributeType) is the entry's schema refusing it, and the next candidate is tried;
+   "the value is already there" (20) is reported as `GrantAlreadyExists`, not as an error.
+3. **Verify.** After a write, the entry is re-read **on the connection that accepted it** and the
+   connector asks the same question sync asks -- would the read path report this principal as a
+   member? A write the server accepted but the re-read cannot confirm is reported as a retryable
+   error and is *not* followed by a write to another attribute, which would leave the principal in
+   two places.
+
+A revoke is different, deliberately. It deletes the **exact stored values** that hold the principal,
+from **every** attribute that holds them, in one atomic request -- never from a guess, and never from
+an attribute the operator pinned. If no attribute holds the principal, the connector checks two
+memberships it cannot remove and reports them instead of a false success: a membership that comes
+from the user's own `gidNumber` (the group is a primary group), and a membership inherited through a
+nested group (the group is a member of this one). Otherwise the answer is `GrantAlreadyRevoked`.
+
+Known limits:
+
+- A directory with schema checking **off** never rejects anything, so step 2 learns nothing and the
+  first candidate is used. OpenLDAP cannot disable schema checking (since 2.4 the directive is gone),
+  so this only affects servers that can, such as 389 DS (`nsslapd-schemacheck`). Use the pin below.
+- A hybrid entry carrying both `groupOfURLs` and a static group class keeps its existing behavior:
+  with the exact spelling `groupOfURLs`, the entry is treated as dynamic on both the read and the
+  write side; with a different spelling, as a static group. This change does not alter that.
+- A membership attribute outside these three (a site-specific attribute) is invisible to sync and to
+  provisioning alike.
+- Nested groups are read (as expandable grants) and the inherited-membership guard covers a revoke of
+  the expanded grant; the traversal that detects inheritance is depth-capped, and a chain deeper than
+  the cap is reported as an error rather than as "already revoked".
+- Removing the last member of a `groupOfNames` can be rejected by the server (`member` is a MUST
+  attribute of that class). That is unchanged.
+- Role membership still writes through `baton-ldap`'s idempotent-error-swallowing modify path, so a
+  role grant or revoke can still fail silently. Roles are not part of this behavior change.
+
+### `--group-member-attribute`
+
+| CLI Flag | Environment Variable | Explaination |
+|----------|----------|----------|
+| `--group-member-attribute` | `BATON_GROUP_MEMBER_ATTRIBUTE` | **optional** Which LDAP attribute to write group membership to: `auto` (default), `member`, `uniqueMember` or `memberUid`. Any other value is rejected at startup, so a typo cannot silently disable a pin. |
+
+`auto` is the behavior described above. Pin it when the directory cannot be learned from -- for
+example when schema checking is disabled, so nothing is ever rejected and the connector would use its
+first candidate for an entry that shows no membership. The pin governs **grants only**: a new
+membership is written to the pinned attribute and only that one, and a rejection of it is reported
+rather than falling through to an attribute the operator did not choose. **Revokes ignore the pin**,
+because deleting from an attribute that does not hold the value is exactly the failure the pin would
+otherwise reintroduce.
+
+# Developing baton-ldap
+
 ## How to test with Docker Compose
 You can use [compose.yaml](./compose.yaml) to launch an LDAP server and a PHP LDAP admin server to interact with the LDAP server.
 
@@ -301,7 +370,7 @@ After successfully syncing data, use the baton CLI to list the resources and see
 
 - Users
 - Roles as `organizationalRole` in LDAP
-- Groups as `groupOfUniqueNames` in LDAP
+- Groups as `groupOfNames`, `groupOfUniqueNames`, `groupOfURLs`, `posixGroup` or `group` in LDAP
 
 `baton-ldap` will sync information only from under the base DN specified by the `--base-dn` flag in the configuration.
 
