@@ -495,13 +495,12 @@ func (g *groupResourceType) groupEffects(ctx context.Context, l *zap.Logger, gro
 			for _, deletion := range deletions {
 				req.Delete(deletion.attr, deletion.values)
 			}
+			// Gone from every attribute, not just from the ones this request named:
+			// the decision was taken from a read, and something else may have added
+			// the principal to a fourth place since. The read path's question is the
+			// one that matters here, and it is stronger than the delete's own list.
 			return g.client.LdapModifyStrictAndConfirm(ctx, req, membershipAttrs, func(entry *ldap3.Entry) (bool, error) {
-				for _, deletion := range deletions {
-					if attributeHoldsPrincipal(entry, deletion.attr, id) {
-						return false, nil
-					}
-				}
-				return true, nil
+				return !anyAttributeHoldsPrincipal(entry, id), nil
 			})
 		},
 	}
