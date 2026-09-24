@@ -372,7 +372,11 @@ func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipSt
 	}
 
 	return groupMembershipState{
-		objectClasses:   entry.GetAttributeValues("objectClass"),
+		// Equal-fold, unlike the read path's own objectClass read: a server that
+		// returns the attribute name in another case must not silently cost the
+		// decision its objectClass evidence, which is the only thing that orders
+		// the candidates for an entry holding no membership.
+		objectClasses:   entry.GetEqualFoldAttributeValues("objectClass"),
 		member:          entry.GetEqualFoldAttributeValues(attrGroupMember),
 		uniqueMember:    entry.GetEqualFoldAttributeValues(attrGroupUniqueMember),
 		memberUid:       entry.GetEqualFoldAttributeValues(attrGroupMemberPosix),
