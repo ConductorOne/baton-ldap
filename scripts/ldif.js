@@ -147,3 +147,20 @@ title: Test*User ${userIdStr}
 
 `);
 }
+
+// A groupOfNames group for the membership sync test. Its membership lives in
+// `member` (a DN), which is the attribute groupOfNames permits. `uniqueMember` --
+// the attribute the connector used to fall back on for any class it did not
+// recognise -- is not permitted here, so a write to it is rejected outright, and a
+// delete from it reports "attribute not present", which the connector's
+// idempotent-error handling used to turn into a reported success while the member
+// stayed. Both cases are exercised by the `Grant/revoke (groupOfNames)` CI step.
+write(`dn: cn=groupofnames00000,dc=example,dc=org
+objectClass: top
+objectClass: groupOfNames
+cn: groupofnames00000
+description: groupOfNames group with DN members
+member: cn=testUSER00099@example.com,dc=example,dc=org
+member: cn=testUSER00098@example.com,dc=example,dc=org
+
+`);
