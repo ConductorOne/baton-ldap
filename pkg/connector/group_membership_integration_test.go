@@ -37,7 +37,7 @@ func groupMembershipFixture(ctx context.Context, t *testing.T) (*groupResourceTy
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.EffectiveGroupMemberAttribute())
+		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
 
 	return gb, connector
 }
@@ -252,7 +252,7 @@ func TestPrimaryGroupRevokeReportsPrimaryGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.EffectiveGroupMemberAttribute())
+		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
 
 	group := groupResourceFor(ctx, t, gb, "cn=staff,ou=groups,dc=example,dc=org")
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
@@ -305,7 +305,7 @@ func TestRfc2307bisCoexistGrantFollowsContent(t *testing.T) {
 	}
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.EffectiveGroupMemberAttribute())
+		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
 
 	group := groupResourceFor(ctx, t, gb, coexistDN)
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
@@ -388,4 +388,44 @@ func TestMemberUIDCollisionGrantWritesTheResolvedName(t *testing.T) {
 	principals := grantedPrincipals(ctx, t, gb, group)
 	require.Contains(t, principals, robertDN)
 	require.Contains(t, principals, daveDN, "the read path must now report dave too")
+}
+
+// TestLargeGroupRevokeIsNotBlockedByTheInheritanceGuard covers the group size that
+// broke the inheritance guard: 60 members, no nesting. The guard used to read one
+// entry per member looking for the group-valued ones, and its cap reported a
+// cut-short search for any group this size, so a revoke removed the value and then
+// returned a non-retryable "stopped early" error -- and a retry failed the same way,
+// leaving the task unable to complete. An absent member failed too, instead of
+// answering already-revoked.
+func TestLargeGroupRevokeIsNotBlockedByTheInheritanceGuard(t *testing.T) {
+	ctx := t.Context()
+	gb, connector := groupMembershipFixture(ctx, t)
+
+	const (
+		bigGroupDN = "cn=big,ou=groups,dc=example,dc=org"
+		memberDN   = "cn=bulk00,ou=users,dc=example,dc=org"
+		absentDN   = "cn=alice,ou=users,dc=example,dc=org"
+	)
+
+	group := groupResourceFor(ctx, t, gb, bigGroupDN)
+	entitlement := membershipEntitlementFor(ctx, t, gb, group)
+
+	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 60)
+
+	// The revocation of a real member succeeds, and really removes it.
+	annos, err := gb.Revoke(ctx, membershipGrant(memberDN, entitlement))
+	require.NoError(t, err, "a 60-member group is an ordinary group; the size must not fail the revoke")
+	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyRevoked{}))
+	require.NotContains(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), memberDN)
+	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 59)
+
+	// And the same call for a principal who is not a member answers already-revoked
+	// rather than a size-dependent error.
+	annos, err = gb.Revoke(ctx, membershipGrant(absentDN, entitlement))
+	require.NoError(t, err)
+	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+
+	// The nested-group guard still works on a large group: a group this size that
+	// contains a group holding the principal reports the source.
+	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), absentDN)
 }

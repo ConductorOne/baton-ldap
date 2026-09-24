@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/conductorone/baton-ldap/pkg/config"
@@ -320,12 +319,6 @@ func (g *groupResourceType) principalIdentity(ctx context.Context, principalDN *
 	return id, nil
 }
 
-// matchPrincipal reports, per membership attribute, the exact stored values that
-// name the principal. A nil answer means the principal is in none of them.
-//
-// Only this group's own stored values are examined: an inherited membership must
-// not look like a direct one, or a grant would report success off the back of
-// another group's membership and a revoke would remove the wrong thing.
 // matchPrincipal reports, per membership attribute, the exact stored values that
 // name the principal. A nil answer means the principal is in none of them.
 //
@@ -743,8 +736,8 @@ func decideRevokeOutcome(removed bool, absence revokeAbsence, groupDN string, pr
 		remaining = fmt.Sprintf("the membership is inherited via %s, so revoke the membership of the source instead", absence.inheritedVia)
 	case absence.truncated:
 		remaining = fmt.Sprintf(
-			"the nested-group search stopped early (after %d levels or %d entries) without establishing that there is no inherited membership",
-			inheritedMembershipDepth, inheritedMembershipLookupCap)
+			"the inherited-membership search stopped early (after %d levels or a full page of %d entries) without establishing that there is no inherited membership",
+			inheritedMembershipDepth, inheritedMembershipSearchLimit)
 	}
 
 	if remaining != "" {
@@ -798,162 +791,309 @@ func (g *groupResourceType) primaryGroupMember(ctx context.Context, group *ldap3
 	return len(entries) > 0, nil
 }
 
-// inheritedMembershipDepth bounds the nested-group traversal. A chain deeper than
-// this reports that it was cut short rather than answering "not inherited", so a
-// depth-capped search can never produce a false "already revoked".
+// inheritedMembershipDepth bounds the not-inherited walk by ancestry: a chain
+// deeper than this reports that it stopped rather than answering "not inherited".
 const inheritedMembershipDepth = 5
 
-// inheritedMembershipLookupCap bounds how many entries the traversal reads in
-// total. Most of a group's member values are users, and each one costs a lookup
-// that comes back "not a group", so without a cap a revoke of an already-removed
-// member on a very large group would spend one search per member. Hitting the cap
-// is reported the same way as the depth cap, never as "not inherited".
-const inheritedMembershipLookupCap = 50
+// inheritedMembershipSearchLimit is the page size the walk asks for. A search that
+// comes back full may have more behind it, which is reported as a truncated walk
+// (never as "not inherited"): a directory with more than this many groups naming
+// the same principal, or holding the same group, is not something the answer can
+// be established for by one page.
+const inheritedMembershipSearchLimit = 200
 
-// inheritedSourceFromGrant reads the received grant's Sources.
+// grantIsDirectOnly reports whether the received grant's Sources say this group's
+// own entitlement is the only contributor and that it is direct.
 //
-// The SDK's expander builds an expanded grant with the *user* as principal and the
-// contributing entitlements in Sources, each flagged direct or not, so a
-// membership this group only appears to hold through a nested group arrives with a
-// source that is not direct on this group's own entitlement. An empty answer means
-// "not inherited, or the caller forwarded no sources" -- whether C1 forwards them
-// on Revoke is not established, which is why the traversal exists alongside it.
-func inheritedSourceFromGrant(gr *v2.Grant) string {
+// It answers the common case without a search: such a grant's membership is here
+// and nowhere else. Sources come from the expansion the SDK computed at the last
+// sync, so they are used only for this negative case, never to *name* a source --
+// a nested membership removed outside C1 would otherwise make the connector report
+// a permanent "inherited via B" error for a membership that no longer exists.
+func grantIsDirectOnly(gr *v2.Grant) bool {
+	own := gr.GetEntitlement().GetId()
+	if own == "" {
+		return false
+	}
+
 	sources := gr.GetSources().GetSources()
 	if len(sources) == 0 {
-		return ""
+		return false
 	}
 
-	own := gr.GetEntitlement().GetId()
-	if source, ok := sources[own]; ok && source.GetIsDirect() {
-		return ""
-	}
-
-	indirect := make([]string, 0, len(sources))
 	for entitlementID, source := range sources {
-		if entitlementID == own || source.GetIsDirect() {
-			continue
+		if entitlementID != own || !source.GetIsDirect() {
+			return false
 		}
-		indirect = append(indirect, entitlementID)
-	}
-	if len(indirect) == 0 {
-		// The grant names only this group's own entitlement and it is not marked
-		// direct, so there is no other entitlement to name.
-		return own
 	}
 
-	sort.Strings(indirect)
-
-	return indirect[0]
+	return true
 }
 
-// inheritedVia names where an inherited membership comes from, first from the
-// grant's own Sources and then, if those say nothing, by walking this group's
-// group-valued members.
+// namedInheritedSources returns the group DNs the received grant's Sources name as
+// contributing entitlements other than this group's own. A group's membership
+// entitlement id is "group:<dn>:member", so the DN is recoverable from the key.
+//
+// They are hints to check live, never the answer: Sources come from the last sync,
+// so a nested membership removed outside C1 must not produce a permanent
+// "inherited via B" error. A hint that is still true is worth having all the same --
+// it names a group by DN, which reaches one that lives outside the walk's search
+// scope.
+func namedInheritedSources(gr *v2.Grant, ownEntitlement string) []string {
+	const prefix = "group:"
+	const suffix = ":member"
+
+	sources := gr.GetSources().GetSources()
+	if len(sources) == 0 {
+		return nil
+	}
+
+	var rv []string
+	for entitlementID := range sources {
+		if entitlementID == ownEntitlement {
+			continue
+		}
+		if !strings.HasPrefix(entitlementID, prefix) || !strings.HasSuffix(entitlementID, suffix) {
+			continue
+		}
+		dn := entitlementID[len(prefix) : len(entitlementID)-len(suffix)]
+		if canonicalKey(dn) == "" {
+			continue
+		}
+		rv = append(rv, dn)
+	}
+
+	return rv
+}
+
+// namedSourceHoldsPrincipal reports whether a group named by the grant holds the
+// principal directly, read by DN so that the walk's search scope does not matter.
+func (g *groupResourceType) namedSourceHoldsPrincipal(ctx context.Context, l *zap.Logger, dn string, id principalIdentity) (bool, error) {
+	entry, err := g.getGroup(ctx, dn)
+	if err != nil {
+		if isNotFound(err) {
+			l.Debug("baton-ldap: a source named by the grant no longer exists",
+				zap.String("source_dn", dn), zap.String("principal_dn", id.dn))
+			return false, nil
+		}
+		return false, err
+	}
+
+	return groupHoldsPrincipal(entry, id), nil
+}
+
+// inheritedVia names the group through which the principal is a member of groupDN
+// without being in any of its attributes, empty when there is none, and reports a
+// search that could not establish either answer.
+//
+// A membership the read path reports through expansion is what this exists for: a
+// member value that resolves to a group produces a grant on the parent entitlement
+// with the user as principal, which reaches Revoke as an ordinary user grant for a
+// membership that exists in no attribute of this group.
 func (g *groupResourceType) inheritedVia(ctx context.Context, l *zap.Logger, groupDN string, id principalIdentity, gr *v2.Grant) (string, bool, error) {
-	if source := inheritedSourceFromGrant(gr); source != "" {
-		return source, false, nil
+	if grantIsDirectOnly(gr) {
+		l.Debug("baton-ldap: the grant names only this group's own entitlement as a direct source",
+			zap.String("group_dn", groupDN), zap.String("principal_dn", id.dn))
+		return "", false, nil
+	}
+
+	// A source the grant names is checked live: if it still holds the principal, it
+	// is the answer, and if it does not, the walk decides. That keeps a stale
+	// Sources list from producing a permanent error while still using it for the
+	// case the walk's own searches cannot see.
+	for _, dn := range namedInheritedSources(gr, gr.GetEntitlement().GetId()) {
+		holds, err := g.namedSourceHoldsPrincipal(ctx, l, dn, id)
+		if err != nil {
+			return "", false, err
+		}
+		if holds {
+			l.Debug("baton-ldap: the membership is inherited",
+				zap.String("group_dn", groupDN), zap.String("principal_dn", id.dn), zap.String("source", dn))
+			return canonicalDN(dn), false, nil
+		}
 	}
 
 	return g.inheritedViaTraversal(ctx, l, groupDN, id)
 }
 
-// inheritedViaTraversal walks group-valued members of groupDN, recursively and
-// within a depth cap, and returns the DN of the group that holds the principal
-// directly. truncated reports that the walk stopped at the cap, which is not the
-// same answer as "not found".
+// directHolderFilter matches the groups whose own attributes name the principal:
+// a DN-valued attribute holding the principal's DN, or memberUid holding one of the
+// login names that resolve to it.
+func directHolderFilter(id principalIdentity) string {
+	parts := []string{
+		fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(id.dn)),
+		fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(id.dn)),
+	}
+	for _, name := range id.resolvedNames {
+		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupMemberPosix, ldap3.EscapeFilter(name)))
+	}
+
+	return "(|" + strings.Join(parts, "") + ")"
+}
+
+// holderFilter matches the groups that hold any of groupDNs as a member, which is
+// how the walk climbs from the principal to a group that contains it.
+func holderFilter(groupDNs []string) string {
+	parts := make([]string, 0, len(groupDNs)*2)
+	for _, dn := range groupDNs {
+		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupMember, ldap3.EscapeFilter(dn)))
+		parts = append(parts, fmt.Sprintf("(%s=%s)", attrGroupUniqueMember, ldap3.EscapeFilter(dn)))
+	}
+
+	return "(|" + strings.Join(parts, "") + ")"
+}
+
+// inheritedViaTraversal walks UP from the principal rather than down over this
+// group's members: one search for the groups whose own attributes name the
+// principal, then one search per level for the groups holding those, to a depth
+// cap. The cost is bounded by the nesting around the principal, so a group of ten
+// thousand members costs the same as a group of two.
 //
-// This is the guard for a membership the read path reports through expansion: a
-// member value that resolves to a group produces a grant on the parent
-// entitlement with the user as principal, which reaches Revoke as an ordinary
-// user grant for a membership that exists in no attribute of this group.
+// The down-walk this replaces read one entry per member -- one per user -- and its
+// cap therefore reported a cut-short search for any group with more than about
+// fifty members, which after a confirmed delete made an ordinary revoke report
+// failure while having removed the value.
+//
+// The returned name is the group that holds the principal directly (not an
+// intermediate), and truncated reports that a search filled its page or that the
+// depth cap was reached with ancestry left unexplored.
 func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Logger, groupDN string, id principalIdentity) (string, bool, error) {
-	visited := make(map[string]bool)
-	truncated := false
-	lookups := 0
-
-	// lookup reads one entry and counts the attempt before making it. Every member
-	// value costs a search even when the answer is "not a group" -- which is what
-	// most of them are -- so a cap that only counted the group-valued lookups would
-	// not bound anything.
-	lookup := func(dn string) (*ldap3.Entry, bool, error) {
-		if lookups >= inheritedMembershipLookupCap {
-			truncated = true
-			return nil, false, nil
-		}
-		lookups++
-
-		entry, err := g.getGroup(ctx, dn)
-		if err != nil {
-			if isNotFound(err) {
-				return nil, false, nil
-			}
-			return nil, false, err
-		}
-
-		return entry, true, nil
+	groupKey := canonicalKey(groupDN)
+	if groupKey == "" {
+		return "", false, nil
 	}
 
-	var walk func(dn string, depth int) (string, error)
-	walk = func(dn string, depth int) (string, error) {
-		if visited[dn] {
-			return "", nil
-		}
-		if depth > inheritedMembershipDepth {
-			truncated = true
-			return "", nil
-		}
-		visited[dn] = true
-
-		entry, ok, err := lookup(dn)
-		if err != nil {
-			return "", err
-		}
-		if !ok {
-			return "", nil
-		}
-
-		for _, value := range valuesOf(entry, membershipAttrs) {
-			parsed, err := ldap.CanonicalizeDN(value)
-			if err != nil {
-				continue
-			}
-			memberDN := parsed.String()
-			if memberDN == "" || memberDN == dn {
-				continue
-			}
-
-			member, ok, err := lookup(memberDN)
-			if err != nil {
-				return "", err
-			}
-			if !ok {
-				continue
-			}
-
-			if groupHoldsPrincipal(member, id) {
-				return memberDN, nil
-			}
-
-			found, err := walk(memberDN, depth+1)
-			if err != nil {
-				return "", err
-			}
-			if found != "" {
-				return found, nil
-			}
-		}
-
-		return "", nil
-	}
-
-	// The first walk covers this group's own direct members.
-	found, err := walk(groupDN, 1)
+	holdings, truncated, err := g.searchHolders(ctx, directHolderFilter(id))
 	if err != nil {
 		return "", false, err
 	}
 
-	return found, truncated, nil
+	// source maps a group in the frontier to the group that holds the principal
+	// directly and leads to it, so the answer names the source and not an
+	// intermediate. It doubles as the visited set.
+	source := make(map[string]string, len(holdings))
+	frontier := make([]string, 0, len(holdings))
+	for _, entry := range holdings {
+		key := canonicalKey(entry.DN)
+		if key == "" || key == groupKey {
+			continue
+		}
+		if _, seen := source[key]; seen {
+			continue
+		}
+		source[key] = canonicalDN(entry.DN)
+		frontier = append(frontier, key)
+	}
+
+	for depth := 1; len(frontier) > 0; depth++ {
+		if depth > inheritedMembershipDepth {
+			truncated = true
+			break
+		}
+
+		parents, pageFilled, err := g.searchHolders(ctx, holderFilter(frontier))
+		if err != nil {
+			return "", false, err
+		}
+		if pageFilled {
+			truncated = true
+		}
+
+		next := make([]string, 0, len(parents))
+		for _, parent := range parents {
+			parentKey := canonicalKey(parent.DN)
+			if parentKey == "" {
+				continue
+			}
+
+			child, ok := firstHeld(frontier, parent)
+			if !ok {
+				continue
+			}
+
+			if parentKey == groupKey {
+				l.Debug("baton-ldap: the membership is inherited",
+					zap.String("group_dn", groupDN), zap.String("principal_dn", id.dn),
+					zap.String("source", source[child]))
+				return source[child], false, nil
+			}
+			if _, seen := source[parentKey]; seen {
+				continue
+			}
+
+			source[parentKey] = source[child]
+			next = append(next, parentKey)
+		}
+
+		frontier = next
+	}
+
+	return "", truncated, nil
+}
+
+// searchHolders runs one of the walk's searches and reports whether the page it
+// asked for came back full, which is the only signal available that there may be
+// more entries behind it.
+func (g *groupResourceType) searchHolders(ctx context.Context, filter string) ([]*ldap3.Entry, bool, error) {
+	searchDN := g.baseDN
+	if searchDN == nil {
+		searchDN = g.groupSearchDN
+	}
+
+	entries, nextPage, err := g.client.LdapSearch(
+		ctx,
+		ldap3.ScopeWholeSubtree,
+		searchDN,
+		fmt.Sprintf("(&%s%s)", groupFilter, filter),
+		membershipAttrs,
+		"",
+		inheritedMembershipSearchLimit,
+	)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	return entries, nextPage != "", nil
+}
+
+// firstHeld returns the first group in groupKeys that entry holds as a member, and
+// its canonical key.
+func firstHeld(groupKeys []string, entry *ldap3.Entry) (string, bool) {
+	held := make(map[string]bool, len(groupKeys))
+	for _, key := range groupKeys {
+		held[key] = true
+	}
+
+	for _, value := range valuesOf(entry, []string{attrGroupMember, attrGroupUniqueMember}) {
+		key := canonicalKey(value)
+		if held[key] {
+			return key, true
+		}
+	}
+
+	return "", false
+}
+
+// canonicalKey returns the canonical form of a DN for comparison, or the empty
+// string when it is not a DN at all.
+func canonicalKey(dn string) string {
+	parsed, err := ldap.CanonicalizeDN(dn)
+	if err != nil {
+		return ""
+	}
+	return parsed.String()
+}
+
+// canonicalDN returns the canonical form of a DN, or the input unchanged when it
+// is not a DN (the caller has already checked with canonicalKey).
+func canonicalDN(dn string) string {
+	if key := canonicalKey(dn); key != "" {
+		return key
+	}
+	return dn
 }
 
 // valuesOf returns the values of every named attribute on an entry.
@@ -1116,6 +1256,10 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership in %q: %w", groupDN, err)
 	}
 
+	// stale means the server had nothing to delete, so this call removed nothing --
+	// whatever is true of the membership now, it is not this call's doing.
+	removed := !stale
+
 	if stale {
 		// The delete found nothing there: the read it was decided from is out of
 		// date, or something removed the value first. Re-read and answer from the
@@ -1145,5 +1289,5 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 		return nil, err
 	}
 
-	return decideRevokeOutcome(true, absence, groupDN, id.dn)
+	return decideRevokeOutcome(removed, absence, groupDN, id.dn)
 }

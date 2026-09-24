@@ -62,6 +62,13 @@ type groupResourceType struct {
 	userSearchDN  *ldap3.DN
 	client        *ldap.Client
 
+	// baseDN is the widest subtree the connector was configured for. The
+	// inherited-membership walk searches from it rather than from groupSearchDN: a
+	// nested group can live outside the group search scope and still contribute a
+	// membership through expansion, because the read path resolves a member value
+	// by its own DN.
+	baseDN *ldap3.DN
+
 	// groupMemberAttribute pins the membership attribute a grant is written to,
 	// or is empty when the attribute is learned per entry. See
 	// group_membership.go.
@@ -461,6 +468,14 @@ func (g *groupResourceType) lookupMember(ctx context.Context, memberId string) (
 // canonical DN of the single entry it matched, an empty string when nothing
 // matched, and an error when more than one entry did (a directory whose uid or cn
 // is not unique cannot have its login-name memberships resolved).
+//
+// It asks for one entry, so a name that matches several entries on the first
+// search resolves to whichever one the server returns first rather than to an
+// ambiguity being reported. That only matters when the uid does not resolve and the
+// cn does: the second search then has to face the same name matching more than one
+// user, and the read path and the write path both accept its first match. Kept as
+// it is -- the read path has always resolved this way, and changing it would change
+// which memberships an existing deployment sees.
 func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId string, filter string) (string, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -481,7 +496,11 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 	}
 
 	if len(memberEntry) == 0 {
-		l.Error("ldap-connector: expanding group: failed to find user", zap.String("member_id", memberId), zap.String("search_filter", filter))
+		// Debug, not Error: no match is the expected outcome of one of the two
+		// searches (a memberUid stored as the cn misses the uid filter first, and
+		// the write path asks both for every name it resolves). An Error here would
+		// appear on every provisioning call and on every such membership in a sync.
+		l.Debug("ldap-connector: expanding group: no user matched", zap.String("member_id", memberId), zap.String("search_filter", filter))
 		return "", nil
 	}
 
@@ -623,10 +642,11 @@ func parseMemberURL(rawURL string) (string, int, string, error) {
 }
 
 func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
-	userSearchDN *ldap3.DN, groupMemberAttribute string) *groupResourceType {
+	userSearchDN *ldap3.DN, baseDN *ldap3.DN, groupMemberAttribute string) *groupResourceType {
 	return &groupResourceType{
 		groupSearchDN:        groupSearchDN,
 		userSearchDN:         userSearchDN,
+		baseDN:               baseDN,
 		resourceType:         resourceTypeGroup,
 		client:               client,
 		groupMemberAttribute: groupMemberAttribute,

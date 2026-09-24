@@ -275,7 +275,8 @@ written, the action is idempotent, an unwritable configured attribute fails the 
 call as well as every retry, the write is verified against the entry's actual attribute values, and
 registration is conditional on `--disable-user-attributes` being set.
 
-# Developing baton-ldap
+# Group membership provisioning
+
 
 ## Group membership attribute
 
@@ -332,9 +333,15 @@ Known limits:
 - A membership attribute outside these three (a site-specific attribute) is invisible to sync and to
   provisioning alike.
 - Nested groups are read (as expandable grants) and the inherited-membership guard covers a revoke of
-  the expanded grant; the traversal that detects inheritance is depth-capped (5 levels) and
-  lookup-capped (50 entries), and a search that stops at either bound is reported as an error rather
+  the expanded grant. The check walks **up** from the principal -- the groups that name the principal,
+  then the groups that contain those, to five levels -- so its cost depends on the nesting around the
+  principal and not on how many members the group has. A search that fills its page, or a chain deeper
+  than five levels, is reported as "could not establish that there is no inherited membership" rather
   than as "already revoked".
+- A `memberUid` value that is not the principal's `uid` is resolved by `cn`, and that search asks for a
+  single entry: if the name matches more than one user, whichever one the server returns first decides
+  the membership. (Only reachable when the `uid` does not resolve, and unchanged from how sync has
+  always resolved memberships.)
 - A group whose membership is **diverged** (the same logical membership stored in two attributes)
   is written to both. If the server refuses one of them, the refusal is reported rather than skipped, and
   the attributes written before it stay written: the refusal cannot be retried by a later grant either,

@@ -733,151 +733,167 @@ func TestRevokeOutcome(t *testing.T) {
 		annos, err := decideRevokeOutcome(false, revokeAbsence{truncated: true}, groupDN, principalDN)
 		require.Error(t, err)
 		require.Nil(t, annos)
-		require.ErrorContains(t, err, "nested-group search")
+		require.ErrorContains(t, err, "inherited-membership search stopped early")
 	})
 }
 
-// TestInheritedSourceFromGrant covers the cheap half of the inheritance guard:
-// reading the sources the SDK's expander puts on a grant it materialized from a
-// nested membership.
-func TestInheritedSourceFromGrant(t *testing.T) {
+// TestGrantIsDirectOnly covers the one thing the received grant's Sources are used
+// for: the negative case they can settle without a search. They are never used to
+// name a source, because they come from the last sync -- a nested membership
+// removed outside C1 would otherwise produce a permanent "inherited via B" error
+// for a membership that no longer exists.
+func TestGrantIsDirectOnly(t *testing.T) {
 	const ownEntitlement = "group:cn=outer,ou=groups,dc=example,dc=org:member"
 	const subgroupEntitlement = "group:cn=inner,ou=groups,dc=example,dc=org:member"
 
 	grantWith := func(sources map[string]bool) *v2.Grant {
-		return &v2.Grant{
-			Entitlement: &v2.Entitlement{Id: ownEntitlement},
-			Sources: &v2.GrantSources{
-				Sources: func() map[string]*v2.GrantSources_GrantSource {
-					if sources == nil {
-						return nil
-					}
-					rv := make(map[string]*v2.GrantSources_GrantSource, len(sources))
-					for id, direct := range sources {
-						rv[id] = &v2.GrantSources_GrantSource{IsDirect: direct}
-					}
-					return rv
-				}(),
-			},
+		rv := &v2.Grant{Entitlement: &v2.Entitlement{Id: ownEntitlement}}
+		if sources == nil {
+			return rv
 		}
+		built := make(map[string]*v2.GrantSources_GrantSource, len(sources))
+		for id, direct := range sources {
+			built[id] = &v2.GrantSources_GrantSource{IsDirect: direct}
+		}
+		rv.Sources = &v2.GrantSources{Sources: built}
+		return rv
 	}
 
-	t.Run("no sources means no answer, so the traversal runs", func(t *testing.T) {
-		require.Equal(t, "", inheritedSourceFromGrant(grantWith(nil)))
+	t.Run("no sources answers nothing, so the walk decides", func(t *testing.T) {
+		require.False(t, grantIsDirectOnly(grantWith(nil)))
 	})
 
-	t.Run("a direct source on this group is a direct membership", func(t *testing.T) {
-		require.Equal(t, "", inheritedSourceFromGrant(grantWith(map[string]bool{ownEntitlement: true})))
+	t.Run("this entitlement as the only direct source is not inherited", func(t *testing.T) {
+		require.True(t, grantIsDirectOnly(grantWith(map[string]bool{ownEntitlement: true})))
 	})
 
-	t.Run("an indirect source names the entitlement to revoke instead", func(t *testing.T) {
-		require.Equal(t, subgroupEntitlement, inheritedSourceFromGrant(
-			grantWith(map[string]bool{subgroupEntitlement: false})))
+	t.Run("another entitlement contributing means the walk has to run", func(t *testing.T) {
+		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{subgroupEntitlement: false})))
 	})
 
-	t.Run("a direct source alongside an indirect one leaves the answer to the traversal", func(t *testing.T) {
-		// This case means the grant claims a direct contribution to this very
-		// entitlement while the entry holds no direct value: the entry (or the
-		// grant) is stale. Naming the indirect source would guess which of the two
-		// claims is current, so the traversal -- which reads the directory -- is
-		// the one that answers.
-		require.Equal(t, "", inheritedSourceFromGrant(
-			grantWith(map[string]bool{subgroupEntitlement: false, ownEntitlement: true})))
+	t.Run("a direct source alongside another one is not direct-only", func(t *testing.T) {
+		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{subgroupEntitlement: false, ownEntitlement: true})))
+	})
+
+	t.Run("this entitlement named as not direct leaves the walk to decide", func(t *testing.T) {
+		require.False(t, grantIsDirectOnly(grantWith(map[string]bool{ownEntitlement: false})))
+	})
+
+	t.Run("a grant without an entitlement id is never direct-only", func(t *testing.T) {
+		require.False(t, grantIsDirectOnly(&v2.Grant{
+			Sources: &v2.GrantSources{Sources: map[string]*v2.GrantSources_GrantSource{
+				ownEntitlement: {IsDirect: true},
+			}},
+		}))
 	})
 }
 
-// TestNameCandidateResolvedElsewhere covers a name-valued membership value that
-// belongs to another entry: findMember resolves a login name by uid first and cn
-// second, so a value equal to the principal's cn can be another user's uid. The
-// principal holds no membership there, and -- the dangerous direction -- a revoke
-// must not delete the value, and a grant must not write from that name.
-func TestNameCandidateResolvedElsewhere(t *testing.T) {
-	// The principal is cn=bob (uid aliceb); the group stores the uid of a
-	// different user, "bob".
-	principal := principalIdentity{dn: "cn=bob,ou=users,dc=example,dc=org", uid: "aliceb", cn: "bob", rdn: "bob"}
-	entry := &ldap3.Entry{
-		DN: "cn=g,ou=groups,dc=example,dc=org",
-		Attributes: []*ldap3.EntryAttribute{
-			{Name: "objectClass", Values: []string{"top", "posixGroup"}},
-			{Name: "memberUid", Values: []string{"bob"}},
-		},
+// TestNamedInheritedSources covers the entitlement-id parsing that turns the
+// grant's Sources into group DNs to check live. They are hints, never the answer,
+// which is why a key that is not a group membership entitlement is skipped rather
+// than guessed at.
+func TestNamedInheritedSources(t *testing.T) {
+	const own = "group:cn=outer,ou=groups,dc=example,dc=org:member"
+
+	grantWith := func(ids ...string) *v2.Grant {
+		built := make(map[string]*v2.GrantSources_GrantSource, len(ids))
+		for _, id := range ids {
+			built[id] = &v2.GrantSources_GrantSource{}
+		}
+		return &v2.Grant{Sources: &v2.GrantSources{Sources: built}}
 	}
 
-	// The value is one of the principal's names, which is what makes it a
-	// candidate at all.
-	require.Contains(t, principal.nameCandidates(), "bob")
+	t.Run("no sources names nothing", func(t *testing.T) {
+		require.Empty(t, namedInheritedSources(&v2.Grant{}, own))
+	})
 
-	// The read path resolves it to another entry, so it is not this principal's
-	// membership: nothing to revoke...
-	claimed := identityClaimedByAnotherEntry(principal)
-	require.Empty(t, matchPrincipal(entry, claimed))
-	state := membershipState(entry, claimed)
-	require.Empty(t, state.principalIn)
-	require.False(t, planGroupMembership(state).present)
-	require.False(t, groupHoldsPrincipal(entry, claimed))
+	t.Run("this group's own entitlement is not a source", func(t *testing.T) {
+		require.Empty(t, namedInheritedSources(grantWith(own), own))
+	})
 
-	// ...and it must not be chosen as the value to write either: the Add would
-	// come back 20 (the value is the other user's) and the grant would report
-	// already-exists without writing anything.
-	require.Empty(t, memberUIDValue(entry, claimed))
+	t.Run("another group's entitlement yields its DN", func(t *testing.T) {
+		require.Equal(t, []string{"cn=inner,ou=groups,dc=example,dc=org"},
+			namedInheritedSources(grantWith("group:cn=inner,ou=groups,dc=example,dc=org:member"), own))
+	})
 
-	// The realistic shape of the collision: the uid resolves to the principal, the
-	// cn (the value the entry stores) does not. The write falls back to the uid,
-	// which is a form the group does not use yet but the read path resolves.
-	uidOnly := principal
-	uidOnly.resolvedNames = []string{"aliceb"}
-	require.Equal(t, "aliceb", memberUIDValue(entry, uidOnly))
+	t.Run("a source outside the group search scope is still named", func(t *testing.T) {
+		// The DN is what makes this case reachable at all: the walk searches a
+		// subtree, this does not.
+		require.Equal(t, []string{"cn=elsewhere,dc=example,dc=org"},
+			namedInheritedSources(grantWith("group:cn=elsewhere,dc=example,dc=org:member"), own))
+	})
 
-	// A DN-valued match does not depend on name resolution.
-	dnEntry := &ldap3.Entry{
-		DN: "cn=g,ou=groups,dc=example,dc=org",
-		Attributes: []*ldap3.EntryAttribute{
-			{Name: "objectClass", Values: []string{"top", "groupOfNames"}},
-			{Name: "member", Values: []string{"CN=Bob,OU=Users,DC=Example,DC=Org"}},
-		},
-	}
-	require.Equal(t, []string{"CN=Bob,OU=Users,DC=Example,DC=Org"},
-		matchPrincipal(dnEntry, claimed)[attrGroupMember],
-		"a DN-valued value is exact and needs no name resolution")
+	t.Run("keys that are not group membership entitlements are skipped", func(t *testing.T) {
+		require.Empty(t, namedInheritedSources(grantWith(
+			"user:cn=alice,ou=users,dc=example,dc=org",     // not a group
+			"group:not a dn:member",                        // not a DN
+			"group:cn=g,ou=groups,dc=example,dc=org:admin", // not the member entitlement
+			"group:cn=g,ou=groups,dc=example,dc=org",       // no entitlement segment
+		), own))
+	})
+
+	t.Run("several sources are all returned", func(t *testing.T) {
+		require.ElementsMatch(t, []string{
+			"cn=inner,ou=groups,dc=example,dc=org",
+			"cn=other,ou=groups,dc=example,dc=org",
+		}, namedInheritedSources(grantWith(
+			"group:cn=inner,ou=groups,dc=example,dc=org:member",
+			"group:cn=other,ou=groups,dc=example,dc=org:member",
+		), own))
+	})
 }
 
-// TestMemberUIDValueUsesOnlyResolvedNames covers the write-form choice: only names
-// the read path resolves to the principal are usable, the entry's own form wins
-// among those, and a principal whose names all resolve elsewhere has no form at all
-// (the grant must fail rather than write a value sync cannot see).
-func TestMemberUIDValueUsesOnlyResolvedNames(t *testing.T) {
-	principal := principalIdentity{
+// TestInheritedWalkFilters covers the two filters the walk issues. The walk must
+// reach the directory with a filter that names the principal's own forms (a
+// memberUid value is a login name, not a DN) and with the group classes, so that a
+// group of ten thousand users costs the same as a group of two.
+func TestInheritedWalkFilters(t *testing.T) {
+	id := principalIdentity{
 		dn:            "cn=alice smith,ou=users,dc=example,dc=org",
 		uid:           "asmith",
 		cn:            "Alice Smith",
 		rdn:           "Alice Smith",
 		resolvedNames: []string{"asmith", "Alice Smith"},
 	}
-	entryWith := func(values ...string) *ldap3.Entry {
-		return &ldap3.Entry{
-			DN: "cn=g,ou=groups,dc=example,dc=org",
-			Attributes: []*ldap3.EntryAttribute{
-				{Name: "memberUid", Values: values},
-			},
-		}
-	}
 
-	require.Equal(t, "Alice Smith", memberUIDValue(entryWith("Alice Smith"), principal),
-		"the form the entry already uses, when it resolves to the principal")
-	require.Equal(t, "asmith", memberUIDValue(entryWith("bob"), principal),
-		"otherwise the uid, which is the first resolved name")
-	require.Equal(t, "asmith", memberUIDValue(entryWith(), principal),
-		"an empty memberUid set gets the uid")
+	t.Run("the direct holder filter names every resolved form", func(t *testing.T) {
+		filter := directHolderFilter(id)
+		require.Equal(t,
+			"(|(member=cn=alice smith,ou=users,dc=example,dc=org)(uniqueMember=cn=alice smith,ou=users,dc=example,dc=org)(memberUid=asmith)(memberUid=Alice Smith))",
+			filter)
+		_, err := ldap3.CompileFilter(filter)
+		require.NoError(t, err)
+	})
 
-	noNames := principalIdentity{dn: principal.dn, uid: principal.uid, cn: principal.cn, rdn: principal.rdn}
-	require.Empty(t, memberUIDValue(entryWith("Alice Smith"), noNames),
-		"a principal whose names resolve elsewhere has no memberUid form to write")
+	t.Run("a principal with no resolved names is only looked for by DN", func(t *testing.T) {
+		filter := directHolderFilter(principalIdentity{dn: id.dn})
+		require.NotContains(t, filter, attrGroupMemberPosix)
+		_, err := ldap3.CompileFilter(filter)
+		require.NoError(t, err)
+	})
+
+	t.Run("the holder filter names both DN-valued attributes for every group", func(t *testing.T) {
+		filter := holderFilter([]string{"cn=inner,ou=groups,dc=example,dc=org", "cn=other,ou=groups,dc=example,dc=org"})
+		require.Equal(t,
+			"(|(member=cn=inner,ou=groups,dc=example,dc=org)(uniqueMember=cn=inner,ou=groups,dc=example,dc=org)"+
+				"(member=cn=other,ou=groups,dc=example,dc=org)(uniqueMember=cn=other,ou=groups,dc=example,dc=org))",
+			filter)
+		_, err := ldap3.CompileFilter(filter)
+		require.NoError(t, err)
+	})
+
+	t.Run("filter values are escaped", func(t *testing.T) {
+		filter := directHolderFilter(principalIdentity{dn: "cn=a*b(c),ou=users,dc=example,dc=org"})
+		_, err := ldap3.CompileFilter(filter)
+		require.NoError(t, err)
+		require.Contains(t, filter, `\2a`)
+	})
 }
 
-// TestInheritedTraversalLookupCap covers the traversal's total-lookup cap: a
-// search that stops at the cap must report that it stopped, never "already
-// revoked". The traversal needs a directory, so this asserts the decision side of
-// it -- the same shape the depth cap produces.
+// TestInheritedTraversalTruncation covers the decision side of a walk that could
+// not establish "not inherited": it must report that it stopped, never "already
+// revoked". What makes the walk stop (a full page, or the depth cap) needs a
+// directory and is covered by the large-group integration test.
 func TestInheritedTraversalLookupCap(t *testing.T) {
 	annos, err := decideRevokeOutcome(false, revokeAbsence{truncated: true},
 		"cn=g,ou=groups,dc=example,dc=org", "cn=alice,ou=users,dc=example,dc=org")
