@@ -306,10 +306,20 @@ So the connector observes the group entry and lets the server be the authority:
 
 A revoke is different, deliberately. It deletes the **exact stored values** that hold the principal,
 from **every** attribute that holds them, in one atomic request -- never from a guess, and never from
-an attribute the operator pinned. If no attribute holds the principal, the connector checks two
-memberships it cannot remove and reports them instead of a false success: a membership that comes
-from the user's own `gidNumber` (the group is a primary group), and a membership inherited through a
-nested group (the group is a member of this one). Otherwise the answer is `GrantAlreadyRevoked`.
+an attribute the operator pinned. It then checks two memberships it cannot remove and reports them
+instead of a false success: a membership that comes from the user's own `gidNumber` (the group is a
+primary group), and a membership inherited through a nested group (the group is a member of this
+one). That check runs whether or not this call found a direct membership to delete: a principal who is
+a direct member *and* a primary-group member keeps the group membership after the direct value is
+removed, and the next sync would report the grant again. When neither applies, the revoke answers a
+plain success if it removed a direct membership and `GrantAlreadyRevoked` if there was none.
+
+`memberUid` values are written from the names the directory actually resolves to the principal, and
+only from those. `memberUid` holds a login name, and a name can be another user's: with `uid=dave` on
+one user and `cn=dave` on another, the string `dave` resolves to the first user, so writing it for the
+second would either fail as an existing value or store a membership sync cannot see. Names are
+resolved through the same uid-then-cn lookup the read path uses, freshly on every call, so a long-running
+connector does not act on a stale answer.
 
 Known limits:
 
@@ -325,6 +335,11 @@ Known limits:
   the expanded grant; the traversal that detects inheritance is depth-capped (5 levels) and
   lookup-capped (50 entries), and a search that stops at either bound is reported as an error rather
   than as "already revoked".
+- A group whose membership is **diverged** (the same logical membership stored in two attributes)
+  is written to both. If the server refuses one of them, the refusal is reported rather than skipped, and
+  the attributes written before it stay written: the refusal cannot be retried by a later grant either,
+  because the principal is then already a member in the attribute that was written and the grant answers
+  `GrantAlreadyExists` without touching the refused one. Completing such an entry is a manual write.
 - Removing the last member of a `groupOfNames` can be rejected by the server (`member` is a MUST
   attribute of that class). That is unchanged.
 - Role membership still writes through `baton-ldap`'s idempotent-error-swallowing modify path, so a

@@ -69,11 +69,6 @@ type groupResourceType struct {
 
 	uid2dnCache map[string]string
 	uid2dnMtx   sync.Mutex
-
-	// principalNamesCache caches the login names a principal can be stored as
-	// under memberUid, which costs one search to learn. See principalIdentity.
-	principalNamesCache map[string]principalNameForms
-	principalNamesMtx   sync.Mutex
 }
 
 func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -421,6 +416,10 @@ func uniqueGrants(grants []*v2.Grant) []*v2.Grant {
 }
 
 // findMember: note this function can return an empty string if the member is not found.
+//
+// It is the read path's resolver, and it caches across calls: a sync resolves the
+// same login name many times, and its answers cannot change while the sync runs.
+// The write path must not use this cache (see lookupMember).
 func (g *groupResourceType) findMember(ctx context.Context, memberId string) (string, error) {
 	g.uid2dnMtx.Lock()
 	if dn, ok := g.uid2dnCache[memberId]; ok {
@@ -429,26 +428,39 @@ func (g *groupResourceType) findMember(ctx context.Context, memberId string) (st
 	}
 	g.uid2dnMtx.Unlock()
 
-	filter := fmt.Sprintf(groupMemberUIDFilter, ldap3.EscapeFilter(memberId))
-	dn, err := g.findMemberByFilter(ctx, memberId, filter)
-	if err != nil {
-		return "", err
-	}
-	if dn != "" {
-		return dn, nil
+	dn, err := g.lookupMember(ctx, memberId)
+	if err != nil || dn == "" {
+		return dn, err
 	}
 
-	filter = fmt.Sprintf(groupMemberCommonNameFilter, ldap3.EscapeFilter(memberId))
-	dn, err = g.findMemberByFilter(ctx, memberId, filter)
-	if err != nil {
-		return "", err
-	}
-	if dn != "" {
-		return dn, nil
-	}
-	return "", nil
+	g.uid2dnMtx.Lock()
+	g.uid2dnCache[memberId] = dn
+	g.uid2dnMtx.Unlock()
+
+	return dn, nil
 }
 
+// lookupMember resolves a stored login name to a user DN -- uid first, then cn,
+// exactly as the read path resolves one -- without consulting or filling the read
+// path's cache.
+//
+// The write path uses this one. A connector in service mode runs for weeks, so a
+// name that was re-pointed at a different entry after the first resolution would
+// otherwise decide a write (which attribute to write, and whether the principal is
+// already a member) from an answer that is no longer true.
+func (g *groupResourceType) lookupMember(ctx context.Context, memberId string) (string, error) {
+	dn, err := g.findMemberByFilter(ctx, memberId, fmt.Sprintf(groupMemberUIDFilter, ldap3.EscapeFilter(memberId)))
+	if err != nil || dn != "" {
+		return dn, err
+	}
+
+	return g.findMemberByFilter(ctx, memberId, fmt.Sprintf(groupMemberCommonNameFilter, ldap3.EscapeFilter(memberId)))
+}
+
+// findMemberByFilter runs one of the two login-name searches and returns the
+// canonical DN of the single entry it matched, an empty string when nothing
+// matched, and an error when more than one entry did (a directory whose uid or cn
+// is not unique cannot have its login-name memberships resolved).
 func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId string, filter string) (string, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -490,11 +502,7 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 		return "", err
 	}
 
-	memberDN := memDN.String()
-	g.uid2dnMtx.Lock()
-	g.uid2dnCache[memberId] = memberDN
-	g.uid2dnMtx.Unlock()
-	return memberDN, nil
+	return memDN.String(), nil
 }
 
 func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap3.Entry, error) {
@@ -623,6 +631,5 @@ func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
 		client:               client,
 		groupMemberAttribute: groupMemberAttribute,
 		uid2dnCache:          make(map[string]string),
-		principalNamesCache:  make(map[string]principalNameForms),
 	}
 }

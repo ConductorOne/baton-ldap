@@ -517,7 +517,13 @@ func (c *Client) LdapModifyStrictAndConfirm(
 		return false, err
 	}
 	if !confirmed && confirmationErr != nil {
-		return false, confirmationErr
+		// The write was accepted but the read that confirms it failed. That is
+		// retryable, not final: the SDK's retryer only retries Unavailable and
+		// DeadlineExceeded, and the alternative is a task that fails while the
+		// write it made may well be in place. The message keeps the read's own
+		// error, which is what a support engineer needs to see.
+		return false, status.Errorf(codes.Unavailable,
+			"baton-ldap: the write to %s was accepted but could not be confirmed: %v", modifyRequest.DN, confirmationErr)
 	}
 
 	return confirmed, nil

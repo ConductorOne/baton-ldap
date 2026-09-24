@@ -210,7 +210,7 @@ func TestGroupMembershipIdempotency(t *testing.T) {
 // revoke must say so instead of reporting success.
 func TestNestedGroupRevokeReportsInherited(t *testing.T) {
 	ctx := t.Context()
-	gb, _ := groupMembershipFixture(ctx, t)
+	gb, connector := groupMembershipFixture(ctx, t)
 
 	group := groupResourceFor(ctx, t, gb, fixtureOuterDN)
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
@@ -227,9 +227,18 @@ func TestNestedGroupRevokeReportsInherited(t *testing.T) {
 	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyExists{}))
 	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
 
-	// And now that it is direct, the revoke removes it.
+	// The revoke of that direct membership removes the value it wrote, but it
+	// cannot finish the job: carol is still a member of outer through inner, so the
+	// answer names the remaining source instead of reporting a success the next
+	// sync would contradict.
 	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, entitlement))
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "inherited")
+	require.ErrorContains(t, err, fixtureInnerDN)
+	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember), fixtureCarolDN,
+		"the direct value this call wrote must be gone")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN,
+		"the inherited membership remains, and the answer must say so")
 }
 
 // TestPrimaryGroupRevokeReportsPrimaryGroup covers the other guard: the
@@ -346,4 +355,37 @@ func TestMemberUIDThatResolvesToAnotherUser(t *testing.T) {
 		"another user's membership value must not be deleted")
 	require.Contains(t, grantedPrincipals(ctx, t, gb, group), robertDN,
 		"the read path must still report robert's membership")
+}
+
+// TestMemberUIDCollisionGrantWritesTheResolvedName covers the grant side of the
+// uid/cn collision: the value the group holds for "dave" belongs to cn=robert, and
+// "dave" is also cn=dave's cn. The grant must not write that value (the Add would
+// come back 20, "the value is already there", and Grant would report already-exists
+// having written nothing); it writes the name the read path resolves to dave
+// instead.
+func TestMemberUIDCollisionGrantWritesTheResolvedName(t *testing.T) {
+	ctx := t.Context()
+	gb, connector := groupMembershipFixture(ctx, t)
+
+	const (
+		collisionDN = "cn=collision,ou=groups,dc=example,dc=org"
+		robertDN    = "cn=robert,ou=users,dc=example,dc=org"
+		daveDN      = "cn=dave,ou=users,dc=example,dc=org"
+	)
+
+	group := groupResourceFor(ctx, t, gb, collisionDN)
+	entitlement := membershipEntitlementFor(ctx, t, gb, group)
+
+	annos, err := gb.Grant(ctx, userPrincipal(daveDN), entitlement)
+	require.NoError(t, err)
+	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyExists{}),
+		"nothing had been written for dave, so this must not answer already-exists")
+
+	memberUIDs := groupEntryValues(ctx, t, connector, collisionDN, attrGroupMemberPosix)
+	require.Contains(t, memberUIDs, "robertd", "dave's own resolved name must be written")
+	require.Contains(t, memberUIDs, "dave", "robert's membership must be untouched")
+
+	principals := grantedPrincipals(ctx, t, gb, group)
+	require.Contains(t, principals, robertDN)
+	require.Contains(t, principals, daveDN, "the read path must now report dave too")
 }

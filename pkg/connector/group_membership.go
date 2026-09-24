@@ -188,6 +188,8 @@ const (
 	// rejection is reported rather than skipped: skipping it would return success
 	// while one of the entry's two consumer views stayed un-maintained, which is
 	// the whole reason for following the entry's content instead of a fixed rule.
+	// (A rejection after an earlier target was written leaves the entry partly
+	// written; see the note in grantMembership.)
 	attemptEveryTarget
 )
 
@@ -218,11 +220,15 @@ func pinnedMemberAttribute(configured string) string {
 }
 
 // principalIdentity is what the membership matcher knows about the principal: its
-// canonical DN, plus the login names a memberUid value can take for it.
+// canonical DN, the login names its entry carries, and the subset of those names
+// that the read path's own resolution actually maps to it.
 //
-// The names matter because memberUid holds a login name, not a DN, and both the
-// uid and the cn form are in service: findMember resolves a stored memberUid by
-// uid and then by cn, so a directory may have written either one.
+// The resolved names are what makes a membership write safe. memberUid holds a
+// login name, not a DN, and both the uid and the cn form are in service, so the
+// connector writes a name -- and a name it writes must be one the read path will
+// resolve back to this principal. A name that resolves to a different entry is a
+// name that either cannot be added (the value is already there, as that entry's)
+// or would store a membership sync cannot see.
 type principalIdentity struct {
 	// dn is the principal's canonicalized DN, which is what the read path reports
 	// for a DN-valued membership.
@@ -234,11 +240,15 @@ type principalIdentity struct {
 	// rdn is the value of the principal DN's first RDN, which is the form the
 	// previous implementation wrote unconditionally.
 	rdn string
+	// resolvedNames are the principal's login names that findMember maps to this
+	// principal, most specific first: the uid when it resolves, then the cn, then
+	// the first RDN value. A name that resolves to another entry is not here.
+	resolvedNames []string
 }
 
-// names returns every login name the principal can be stored as, most specific
-// first, deduplicated case-insensitively.
-func (id principalIdentity) names() []string {
+// nameCandidates returns every login name the principal could be stored as,
+// deduplicated case-insensitively, uid first: the order the read path resolves in.
+func (id principalIdentity) nameCandidates() []string {
 	seen := make(map[string]bool, 3)
 	var rv []string
 	for _, name := range []string{id.uid, id.cn, id.rdn} {
@@ -255,37 +265,34 @@ func (id principalIdentity) names() []string {
 	return rv
 }
 
-// holdsName reports whether a stored memberUid value names the principal.
-func (id principalIdentity) holdsName(value string) bool {
-	return slices.ContainsFunc(id.names(), func(name string) bool {
+// resolvesName reports whether a stored login-name value resolves to this
+// principal. It is deliberately not a string comparison against the names the
+// entry carries: findMember resolves a name by uid first and cn second, so a value
+// equal to this principal's cn can belong to another entry whose uid it also is.
+func (id principalIdentity) resolvesName(value string) bool {
+	return slices.ContainsFunc(id.resolvedNames, func(name string) bool {
 		return strings.EqualFold(name, value)
 	})
 }
 
-// principalIdentity resolves the principal's identity, reading its entry when the
-// DN alone does not give its uid and cn.
+// principalIdentity resolves the principal's identity, reading its entry for the
+// uid and cn the DN alone cannot give, and asking the read path's own resolution
+// which of the principal's names map back to it.
 //
-// The read costs one base-scoped search, cached per principal DN for the lifetime
-// of the sync, and it is what makes a memberUid membership written as the uid
-// visible when the principal is named by cn -- without it, such a membership
-// would look absent, and a revoke would report success while leaving the member.
+// The resolution is done fresh on every call rather than cached: a connector in
+// service mode runs for weeks, and a name re-pointed at another entry must change
+// the next write, not the one after a restart. It costs at most one search per
+// distinct name (uid, cn, and the first RDN value, usually two of them).
 //
 // A principal that cannot be found is not an error: an entry the connector cannot
-// read cannot be resolved by the read path either, so the DN's own RDN value is
-// all there is. Any other failure is returned, because guessing here means
-// reporting a membership as absent when it may not be.
+// read cannot be resolved by the read path either, so its names resolve to nothing
+// and a DN-valued membership is the only form that can be written for it. Any
+// other failure is returned, because guessing here means writing a membership the
+// read path will not see.
 func (g *groupResourceType) principalIdentity(ctx context.Context, principalDN *ldap3.DN) (principalIdentity, error) {
 	id := principalIdentity{dn: principalDN.String()}
 	if len(principalDN.RDNs) > 0 && len(principalDN.RDNs[0].Attributes) > 0 {
 		id.rdn = strings.TrimSpace(principalDN.RDNs[0].Attributes[0].Value)
-	}
-
-	g.principalNamesMtx.Lock()
-	cached, ok := g.principalNamesCache[id.dn]
-	g.principalNamesMtx.Unlock()
-	if ok {
-		id.uid, id.cn = cached.uid, cached.cn
-		return id, nil
 	}
 
 	entry, err := g.client.LdapGet(ctx, principalDN, "", []string{attrUserUID, attrUserCommonName})
@@ -293,41 +300,32 @@ func (g *groupResourceType) principalIdentity(ctx context.Context, principalDN *
 	case err == nil:
 		id.uid = entry.GetEqualFoldAttributeValue(attrUserUID)
 		id.cn = entry.GetEqualFoldAttributeValue(attrUserCommonName)
-	case ldap3.IsErrorAnyOf(err, ldap3.LDAPResultNoSuchObject) || status.Code(err) == codes.NotFound:
+	case isNotFound(err):
 		// Unreadable under the connector's user filter. The read path cannot
-		// resolve a membership to it either, so the RDN value is the whole answer.
+		// resolve a membership to it either, so no name resolves.
 	default:
 		return principalIdentity{}, fmt.Errorf("ldap-connector: failed to read group member %q: %w", id.dn, err)
 	}
 
-	g.principalNamesMtx.Lock()
-	if g.principalNamesCache == nil {
-		g.principalNamesCache = make(map[string]principalNameForms)
+	for _, candidate := range id.nameCandidates() {
+		memberDN, err := g.lookupMember(ctx, candidate)
+		if err != nil {
+			return principalIdentity{}, fmt.Errorf("ldap-connector: failed to resolve the group member name %q: %w", candidate, err)
+		}
+		if strings.EqualFold(memberDN, id.dn) {
+			id.resolvedNames = append(id.resolvedNames, candidate)
+		}
 	}
-	g.principalNamesCache[id.dn] = principalNameForms{uid: id.uid, cn: id.cn}
-	g.principalNamesMtx.Unlock()
 
 	return id, nil
 }
 
-// principalNameForms is the cached subset of a principalIdentity that costs a
-// search to learn.
-type principalNameForms struct {
-	uid string
-	cn  string
-}
-
 // matchPrincipal reports, per membership attribute, the exact stored values that
 // name the principal. A nil answer means the principal is in none of them.
 //
 // Only this group's own stored values are examined: an inherited membership must
 // not look like a direct one, or a grant would report success off the back of
 // another group's membership and a revoke would remove the wrong thing.
-// principalMatchResolver resolves a stored login-name value to the DN the read
-// path reports for it, and returns an empty string when nothing resolves. It is
-// findMember in production; tests pass a stub.
-type principalMatchResolver func(ctx context.Context, value string) (string, error)
-
 // matchPrincipal reports, per membership attribute, the exact stored values that
 // name the principal. A nil answer means the principal is in none of them.
 //
@@ -335,27 +333,17 @@ type principalMatchResolver func(ctx context.Context, value string) (string, err
 // not look like a direct one, or a grant would report success off the back of
 // another group's membership and a revoke would remove the wrong thing.
 //
-// A DN-valued match is exact: the value canonicalizes to the principal's DN. A
-// name-valued match (memberUid, or a bare name in a DN-valued attribute) is only a
-// candidate until resolve confirms it, because findMember resolves a stored value
-// by uid and then by cn -- so a value that is one of the principal's own names can
-// still belong to another entry, a user whose uid equals this principal's cn. The
-// confirmation is what keeps a revoke from deleting that other user's membership.
-func matchPrincipal(ctx context.Context, entry *ldap3.Entry, id principalIdentity, resolve principalMatchResolver) (map[string][]string, error) {
+// A DN-valued value is exact: it canonicalizes to the principal's DN. A
+// login-name value counts only when the read path resolves it to the principal
+// (resolvesName), which is what keeps a value that belongs to another entry -- a
+// user whose uid is this principal's cn -- out of both a grant and a revoke.
+func matchPrincipal(entry *ldap3.Entry, id principalIdentity) map[string][]string {
 	var rv map[string][]string
 	add := func(attr, value string) {
 		if rv == nil {
 			rv = make(map[string][]string, len(membershipAttrs))
 		}
 		rv[attr] = append(rv[attr], value)
-	}
-
-	confirm := func(value string) (bool, error) {
-		memberDN, err := resolve(ctx, value)
-		if err != nil {
-			return false, err
-		}
-		return strings.EqualFold(memberDN, id.dn), nil
 	}
 
 	for _, attr := range []string{attrGroupMember, attrGroupUniqueMember} {
@@ -373,49 +361,25 @@ func matchPrincipal(ctx context.Context, entry *ldap3.Entry, id principalIdentit
 			// A value that is not a DN is resolved as a login name by the read
 			// path (the same findMember fallback memberUid uses), so a bare name
 			// stored in a DN-valued attribute can still name the principal.
-			if !id.holdsName(value) {
-				continue
-			}
-			ok, err := confirm(value)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
+			if id.resolvesName(value) {
 				add(attr, value)
 			}
 		}
 	}
 
 	for _, value := range entry.GetEqualFoldAttributeValues(attrGroupMemberPosix) {
-		if !id.holdsName(value) {
-			continue
-		}
-		ok, err := confirm(value)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
+		if id.resolvesName(value) {
 			add(attrGroupMemberPosix, value)
 		}
 	}
 
-	return rv, nil
-}
-
-// resolveMemberName is the production resolver: the read path's own lookup of a
-// stored login name, uid first and then cn.
-func (g *groupResourceType) resolveMemberName(ctx context.Context, value string) (string, error) {
-	return g.findMember(ctx, value)
+	return rv
 }
 
 // membershipState builds the decision input from the group entry and the
-// principal's identity, confirming every name-valued candidate through resolve.
-func membershipState(ctx context.Context, entry *ldap3.Entry, id principalIdentity, resolve principalMatchResolver) (groupMembershipState, error) {
-	matches, err := matchPrincipal(ctx, entry, id, resolve)
-	if err != nil {
-		return groupMembershipState{}, err
-	}
-
+// principal's identity. It performs no I/O.
+func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipState {
+	matches := matchPrincipal(entry, id)
 	attrs := make([]string, 0, len(matches))
 	for attr := range matches {
 		attrs = append(attrs, attr)
@@ -432,31 +396,36 @@ func membershipState(ctx context.Context, entry *ldap3.Entry, id principalIdenti
 		memberUID:       entry.GetEqualFoldAttributeValues(attrGroupMemberPosix),
 		principalIn:     sortedByDocumentedOrder(attrs),
 		principalValues: matches,
-	}, nil
+	}
 }
 
-// memberUIDValue returns the memberUid value to write for the principal.
+// memberUIDValue returns the memberUid value to write for the principal, or the
+// empty string when the principal has no name the read path resolves to it.
 //
-// The entry decides the form. memberUid holds a login name and a directory may
-// store either the uid or the cn (findMember resolves both), so the connector
-// writes the form this group's own values already use: writing the other one
-// would leave a membership the group's own readers do not see. uid is preferred
-// when neither form is in evidence, and the first RDN value -- what the previous
-// implementation wrote unconditionally -- is the last resort.
+// Only resolved names are usable. The entry decides the form -- a directory may
+// store either the uid or the cn, and writing the form this group does not use
+// would leave a membership its own readers miss -- but a name the entry already
+// holds is not usable when it resolves to a different entry: adding it returns 20
+// (the value is that other user's) and storing anything else would be invisible to
+// sync. So the entry's forms are considered first, and only among the names that
+// resolve to this principal; otherwise the uid (the first resolved name), and
+// nothing at all if none resolves.
 func memberUIDValue(entry *ldap3.Entry, id principalIdentity) string {
 	stored := entry.GetEqualFoldAttributeValues(attrGroupMemberPosix)
-	if id.uid != "" && containsFold(stored, id.uid) {
-		return id.uid
+	for _, name := range id.resolvedNames {
+		if containsFold(stored, name) {
+			return name
+		}
 	}
-	if id.cn != "" && containsFold(stored, id.cn) {
-		return id.cn
+	if len(id.resolvedNames) > 0 {
+		return id.resolvedNames[0]
 	}
-	if id.uid != "" {
-		return id.uid
-	}
-	return id.rdn
+	return ""
 }
 
+// containsFold reports whether values holds want, ignoring case: LDAP login names
+// and attribute values are compared case-insensitively by the matching rules the
+// read path relies on.
 func containsFold(values []string, want string) bool {
 	return slices.ContainsFunc(values, func(value string) bool {
 		return strings.EqualFold(value, want)
@@ -505,17 +474,11 @@ type membershipEffects struct {
 
 // groupEffects wires the loops to the directory.
 //
-// The confirming read runs on the connection that accepted the write, and it asks
-// the read path's own question: would a sync of this group show this principal?
+// The confirmation is per attribute and uses the read path's own rule, so a target
+// is confirmed by the attribute it wrote and not by another one that already held
+// the principal (a diverged entry writes two attributes, and the second must not
+// be confirmed by the first).
 func (g *groupResourceType) groupEffects(ctx context.Context, l *zap.Logger, groupDN string, group *ldap3.Entry, id principalIdentity) membershipEffects {
-	holds := func(entry *ldap3.Entry) (bool, error) {
-		return g.groupHoldsPrincipal(ctx, l, entry, id)
-	}
-	absent := func(entry *ldap3.Entry) (bool, error) {
-		held, err := g.groupHoldsPrincipal(ctx, l, entry, id)
-		return !held, err
-	}
-
 	return membershipEffects{
 		value: func(_ context.Context, attr string) ([]string, error) {
 			return membershipValue(group, id, attr)
@@ -523,62 +486,69 @@ func (g *groupResourceType) groupEffects(ctx context.Context, l *zap.Logger, gro
 		add: func(ctx context.Context, attr string, values []string) (bool, error) {
 			req := ldap3.NewModifyRequest(groupDN, nil)
 			req.Add(attr, values)
-			return g.client.LdapModifyStrictAndConfirm(ctx, req, membershipAttrs, holds)
+			return g.client.LdapModifyStrictAndConfirm(ctx, req, membershipAttrs, func(entry *ldap3.Entry) (bool, error) {
+				return attributeHoldsPrincipal(entry, attr, id), nil
+			})
 		},
 		remove: func(ctx context.Context, deletions []membershipDeletion) (bool, error) {
 			req := ldap3.NewModifyRequest(groupDN, nil)
 			for _, deletion := range deletions {
 				req.Delete(deletion.attr, deletion.values)
 			}
-			return g.client.LdapModifyStrictAndConfirm(ctx, req, membershipAttrs, absent)
+			return g.client.LdapModifyStrictAndConfirm(ctx, req, membershipAttrs, func(entry *ldap3.Entry) (bool, error) {
+				for _, deletion := range deletions {
+					if attributeHoldsPrincipal(entry, deletion.attr, id) {
+						return false, nil
+					}
+				}
+				return true, nil
+			})
 		},
 	}
 }
 
-// groupHoldsPrincipal reports whether the read path would report id.dn as a
-// direct member of this group. It is the post-condition check, and it asks
-// "would a sync see this membership?" rather than "did the server return
-// success?".
+// attributeHoldsPrincipal reports whether one attribute's stored values name the
+// principal, by the read path's rule: a value that parses as a DN is the principal
+// when it canonicalizes to the principal's DN, and a login-name value is the
+// principal when the read path resolves it to the principal.
+func attributeHoldsPrincipal(entry *ldap3.Entry, attr string, id principalIdentity) bool {
+	for _, value := range entry.GetEqualFoldAttributeValues(attr) {
+		if parsed, err := ldap.CanonicalizeDN(value); err == nil {
+			if strings.EqualFold(parsed.String(), id.dn) {
+				return true
+			}
+			continue
+		}
+		if id.resolvesName(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyAttributeHoldsPrincipal reports whether the group holds the principal in any
+// of the membership attributes. It is the question the read path answers, and the
+// one the inherited-membership traversal asks of each nested group.
+func anyAttributeHoldsPrincipal(entry *ldap3.Entry, id principalIdentity) bool {
+	return slices.ContainsFunc(membershipAttrs, func(attr string) bool {
+		return attributeHoldsPrincipal(entry, attr, id)
+	})
+}
+
+// groupHoldsPrincipal reports whether the read path would report id.dn as a direct
+// member of this group. It is the post-condition check: it asks "would a sync see
+// this membership?" rather than "did the server return success?".
 //
-// The resolution is the read path's own: a stored value that parses as a DN
-// resolves to that DN, and one that does not is resolved through findMember's
-// uid-then-cn search. The two pre-filters make that affordable on a large group,
-// and each skips only values that cannot change the answer: a DN-valued membership
-// that canonicalizes to something else cannot resolve to the principal (the read
-// path's lookup of that same DN returns that DN), and a memberUid value that is
-// not one of the principal's own login names cannot resolve to it either
-// (findMember resolves by uid or cn, so a value that resolves to the principal is
-// one of those names).
+// The resolution it needs -- which of the principal's names map back to it -- was
+// done once when the principal's identity was resolved, so this performs no I/O
+// and, in particular, no search that would take a second pooled connection while
+// the modify's connection is held.
 //
 // A plain DN string comparison is deliberately not the check: CanonicalizeDN
 // lowercases values only for the attribute types in caseInsensitiveAttrs, so the
 // read path is the authority here, not our string handling.
-func (g *groupResourceType) groupHoldsPrincipal(ctx context.Context, l *zap.Logger, entry *ldap3.Entry, id principalIdentity) (bool, error) {
-	for _, attr := range membershipAttrs {
-		for _, value := range entry.GetEqualFoldAttributeValues(attr) {
-			if parsed, err := ldap.CanonicalizeDN(value); err == nil {
-				if strings.EqualFold(parsed.String(), id.dn) {
-					return true, nil
-				}
-				continue
-			}
-			if !id.holdsName(value) {
-				continue
-			}
-			memberDN, err := g.resolveMemberName(ctx, value)
-			if err != nil {
-				return false, err
-			}
-			if strings.EqualFold(memberDN, id.dn) {
-				return true, nil
-			}
-		}
-	}
-
-	l.Debug("baton-ldap: group does not hold the principal",
-		zap.String("group_dn", entry.DN), zap.String("principal_dn", id.dn))
-
-	return false, nil
+func groupHoldsPrincipal(entry *ldap3.Entry, id principalIdentity) bool {
+	return anyAttributeHoldsPrincipal(entry, id)
 }
 
 // retryableMembershipError marks an outcome the connector could not establish as
@@ -666,6 +636,15 @@ func grantMembership(
 			l.Info("baton-ldap: the group does not permit this membership attribute",
 				zap.String("attribute", attr), zap.Error(err))
 			if mode == attemptEveryTarget {
+				// Reported, not skipped: the entry itself showed membership in this
+				// attribute, so half-writing the entry and calling it done would
+				// leave one of its two consumer views un-maintained.
+				//
+				// Note for the operator and for the next call: if an earlier target
+				// was already written, rule 2 short-circuits later grants on this
+				// group (the principal is present in the attribute that was written)
+				// and answers GrantAlreadyExists without retrying this one. Completing
+				// such an entry means writing the refused attribute out of band.
 				return nil, fmt.Errorf("the entry does not permit %s (already wrote %v): %w", attr, written, err)
 			}
 			lastRejection = err
@@ -746,30 +725,43 @@ type revokeAbsence struct {
 	truncated bool
 }
 
-// decideRevokeAbsence renders the outcome for a membership the read path reports
-// but no membership attribute holds. It is pure, so the precedence between the
-// two guards is testable without a directory.
+// decideRevokeOutcome renders the result of a revoke once the group holds no
+// direct membership for the principal.
 //
-// Neither guard may answer "already revoked": both describe a membership that
-// exists and that C1 will report again on the next sync, and a success here would
-// be the silent failure this change exists to remove.
-func decideRevokeAbsence(absence revokeAbsence, groupDN string, principalDN string) (annotations.Annotations, error) {
+// removed says whether this call removed one. The two cases answer the same way
+// except when nothing else holds the principal: a removal that leaves a
+// primary-group or inherited membership behind is still an error, because the next
+// sync reports the grant again and a success here would be a lie about the state.
+// It is pure, so the precedence between the guards is testable without a directory.
+func decideRevokeOutcome(removed bool, absence revokeAbsence, groupDN string, principalDN string) (annotations.Annotations, error) {
+	// Naming what remains matters more than naming what was removed: it is the
+	// part the operator has to act on.
+	remaining := ""
 	switch {
 	case absence.primaryGroup:
-		return nil, fmt.Errorf(
-			"baton-ldap: cannot revoke %q from group %q: the membership is the user's primary group (gidNumber), "+
-				"so change the user's gidNumber instead", principalDN, groupDN)
-
+		remaining = "the membership is the user's primary group (gidNumber), so change the user's gidNumber instead"
 	case absence.inheritedVia != "":
-		return nil, fmt.Errorf(
-			"baton-ldap: cannot revoke %q from group %q: the membership is inherited via %s, "+
-				"so revoke the membership of the source instead", principalDN, groupDN, absence.inheritedVia)
-
+		remaining = fmt.Sprintf("the membership is inherited via %s, so revoke the membership of the source instead", absence.inheritedVia)
 	case absence.truncated:
+		remaining = fmt.Sprintf(
+			"the nested-group search stopped early (after %d levels or %d entries) without establishing that there is no inherited membership",
+			inheritedMembershipDepth, inheritedMembershipLookupCap)
+	}
+
+	if remaining != "" {
+		if removed {
+			return nil, fmt.Errorf(
+				"baton-ldap: removed the direct membership of %q from group %q, but %s",
+				principalDN, groupDN, remaining)
+		}
 		return nil, fmt.Errorf(
-			"baton-ldap: cannot revoke %q from group %q: no direct membership was found, and the nested-group search "+
-				"stopped early (after %d levels or %d entries) without establishing that there is none",
-			principalDN, groupDN, inheritedMembershipDepth, inheritedMembershipLookupCap)
+			"baton-ldap: cannot revoke %q from group %q: %s", principalDN, groupDN, remaining)
+	}
+
+	if removed {
+		// The direct membership, which was the whole of the principal's membership
+		// in this group, is gone.
+		return nil, nil
 	}
 
 	return annotations.New(&v2.GrantAlreadyRevoked{}), nil
@@ -881,26 +873,45 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 	truncated := false
 	lookups := 0
 
-	var walk func(dn string, depth int) (string, error)
-	walk = func(dn string, depth int) (string, error) {
-		if visited[dn] {
-			return "", nil
-		}
-		if depth > inheritedMembershipDepth || lookups >= inheritedMembershipLookupCap {
+	// lookup reads one entry and counts the attempt before making it. Every member
+	// value costs a search even when the answer is "not a group" -- which is what
+	// most of them are -- so a cap that only counted the group-valued lookups would
+	// not bound anything.
+	lookup := func(dn string) (*ldap3.Entry, bool, error) {
+		if lookups >= inheritedMembershipLookupCap {
 			truncated = true
-			return "", nil
+			return nil, false, nil
 		}
-		visited[dn] = true
 		lookups++
 
 		entry, err := g.getGroup(ctx, dn)
 		if err != nil {
 			if isNotFound(err) {
-				// A member that is not a group this connector can read is not a
-				// nested group as far as this connector is concerned.
-				return "", nil
+				return nil, false, nil
 			}
+			return nil, false, err
+		}
+
+		return entry, true, nil
+	}
+
+	var walk func(dn string, depth int) (string, error)
+	walk = func(dn string, depth int) (string, error) {
+		if visited[dn] {
+			return "", nil
+		}
+		if depth > inheritedMembershipDepth {
+			truncated = true
+			return "", nil
+		}
+		visited[dn] = true
+
+		entry, ok, err := lookup(dn)
+		if err != nil {
 			return "", err
+		}
+		if !ok {
+			return "", nil
 		}
 
 		for _, value := range valuesOf(entry, membershipAttrs) {
@@ -913,24 +924,15 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 				continue
 			}
 
-			if lookups >= inheritedMembershipLookupCap {
-				truncated = true
-				return "", nil
-			}
-			member, err := g.getGroup(ctx, memberDN)
+			member, ok, err := lookup(memberDN)
 			if err != nil {
-				if isNotFound(err) {
-					continue
-				}
 				return "", err
 			}
-			lookups++
+			if !ok {
+				continue
+			}
 
-			holds, err := g.groupHoldsPrincipal(ctx, l, member, id)
-			if err != nil {
-				return "", err
-			}
-			if holds {
+			if groupHoldsPrincipal(member, id) {
 				return memberDN, nil
 			}
 
@@ -971,10 +973,9 @@ func isNotFound(err error) bool {
 	return ldap3.IsErrorAnyOf(err, ldap3.LDAPResultNoSuchObject) || status.Code(err) == codes.NotFound
 }
 
-// revokeAbsentMembership decides what to do when no membership attribute of the
-// group holds the principal: the primary-group guard, then the inherited-
-// membership guard, then already-revoked.
-func (g *groupResourceType) revokeAbsentMembership(
+// revokeMembershipGuards evaluates what else holds the principal once the group's
+// own attributes do not (or no longer do).
+func (g *groupResourceType) revokeMembershipGuards(
 	ctx context.Context,
 	l *zap.Logger,
 	groupDN string,
@@ -982,24 +983,25 @@ func (g *groupResourceType) revokeAbsentMembership(
 	principalDN *ldap3.DN,
 	id principalIdentity,
 	gr *v2.Grant,
-) (annotations.Annotations, error) {
+) (revokeAbsence, error) {
 	primary, err := g.primaryGroupMember(ctx, group, principalDN)
 	if err != nil {
-		return nil, err
+		return revokeAbsence{}, err
 	}
 
-	var source string
-	var truncated bool
-	if !primary {
-		source, truncated, err = g.inheritedVia(ctx, l, groupDN, id, gr)
-		if err != nil {
-			return nil, err
-		}
+	absence := revokeAbsence{primaryGroup: primary}
+	if primary {
+		return absence, nil
 	}
 
-	return decideRevokeAbsence(
-		revokeAbsence{primaryGroup: primary, inheritedVia: source, truncated: truncated},
-		groupDN, id.dn)
+	source, truncated, err := g.inheritedVia(ctx, l, groupDN, id, gr)
+	if err != nil {
+		return revokeAbsence{}, err
+	}
+	absence.inheritedVia = source
+	absence.truncated = truncated
+
+	return absence, nil
 }
 
 // Grant adds the principal to the group.
@@ -1027,10 +1029,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, err
 	}
 
-	state, err := membershipState(ctx, group, id, g.resolveMemberName)
-	if err != nil {
-		return nil, err
-	}
+	state := membershipState(group, id)
 	plan := planGroupMembership(state)
 
 	if plan.dynamic {
@@ -1097,10 +1096,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 		return nil, err
 	}
 
-	state, err := membershipState(ctx, group, id, g.resolveMemberName)
-	if err != nil {
-		return nil, err
-	}
+	state := membershipState(group, id)
 	plan := planGroupMembership(state)
 
 	if plan.dynamic {
@@ -1108,7 +1104,11 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 	}
 
 	if !plan.present {
-		return g.revokeAbsentMembership(ctx, l, groupDN, group, principalDN, id, gr)
+		absence, err := g.revokeMembershipGuards(ctx, l, groupDN, group, principalDN, id, gr)
+		if err != nil {
+			return nil, err
+		}
+		return decideRevokeOutcome(false, absence, groupDN, id.dn)
 	}
 
 	deletions := revokeDeletions(plan, state.principalValues)
@@ -1116,29 +1116,35 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 	if err != nil {
 		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership in %q: %w", groupDN, err)
 	}
-	if !stale {
-		return nil, nil
-	}
 
-	// The delete found nothing there: the read it was decided from is out of
-	// date, or something removed the value first. Re-read and answer from the
-	// state now, which is the only honest basis for either outcome.
-	fresh, err := g.getGroup(ctx, groupDN)
-	if err != nil {
-		if isNotFound(err) {
-			// The group itself is gone, so there is nothing left to revoke.
-			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+	if stale {
+		// The delete found nothing there: the read it was decided from is out of
+		// date, or something removed the value first. Re-read and answer from the
+		// state now, which is the only honest basis for either outcome.
+		fresh, err := g.getGroup(ctx, groupDN)
+		if err != nil {
+			if isNotFound(err) {
+				// The group itself is gone, so there is nothing left to revoke.
+				return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+			}
+			return nil, err
 		}
-		return nil, err
+		if planGroupMembership(membershipState(fresh, id)).present {
+			return nil, retryableMembershipError(
+				"the membership of %q in %q is still present after the delete reported it absent", id.dn, groupDN)
+		}
+		group = fresh
 	}
-	freshState, err := membershipState(ctx, fresh, id, g.resolveMemberName)
+
+	// The direct membership is gone. That is not the whole answer: a principal who
+	// is also a member through their own gidNumber, or through a nested group, is
+	// still a member of this group as far as the read path is concerned, and the
+	// next sync would report the grant again. Answer with what remains instead of a
+	// success the directory will contradict.
+	absence, err := g.revokeMembershipGuards(ctx, l, groupDN, group, principalDN, id, gr)
 	if err != nil {
 		return nil, err
 	}
-	if planGroupMembership(freshState).present {
-		return nil, retryableMembershipError(
-			"the membership of %q in %q is still present after the delete reported it absent", id.dn, groupDN)
-	}
 
-	return g.revokeAbsentMembership(ctx, l, groupDN, fresh, principalDN, id, gr)
+	return decideRevokeOutcome(true, absence, groupDN, id.dn)
 }

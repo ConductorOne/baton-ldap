@@ -198,17 +198,19 @@ func ldapCodeError(code uint16, message string) error {
 
 func testLogger() *zap.Logger { return zap.NewNop() }
 
-// resolveToPrincipal is the stub resolver for the tests that exercise the
-// candidate rules only: it assumes a stored name resolves to the principal,
-// which is the case the read path decides with its uid-then-cn search.
-func resolveToPrincipal(id principalIdentity) principalMatchResolver {
-	return func(_ context.Context, _ string) (string, error) { return id.dn, nil }
+// resolvingIdentity returns the identity with every name candidate resolved to the
+// principal, which is the case the read path decides with its uid-then-cn search
+// when no other entry claims the name.
+func resolvingIdentity(id principalIdentity) principalIdentity {
+	id.resolvedNames = id.nameCandidates()
+	return id
 }
 
-// resolveToOther is the stub for the collision case: the stored name belongs to
-// another entry.
-func resolveToOther(dn string) principalMatchResolver {
-	return func(_ context.Context, _ string) (string, error) { return dn, nil }
+// identityClaimedByAnotherEntry returns the identity with no resolved names: every
+// name it carries resolves to a different entry, or to nothing.
+func identityClaimedByAnotherEntry(id principalIdentity) principalIdentity {
+	id.resolvedNames = nil
+	return id
 }
 
 // fakeEffects records what the loops did and answers with what the test says a
@@ -553,8 +555,6 @@ func TestPinnedGrant(t *testing.T) {
 // login names is written, and that a stored value in either form is matched
 // (and deleted) exactly as stored.
 func TestMemberUidForms(t *testing.T) {
-	ctx := t.Context()
-
 	entryWithMemberUID := func(values ...string) *ldap3.Entry {
 		return &ldap3.Entry{
 			DN: "cn=g,ou=groups,dc=example,dc=org",
@@ -574,69 +574,61 @@ func TestMemberUidForms(t *testing.T) {
 
 	t.Run("the stored uid form is detected and deleted as stored", func(t *testing.T) {
 		entry := entryWithMemberUID("asmith")
-		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		matches := matchPrincipal(entry, resolvingIdentity(principal))
 		require.Equal(t, []string{"asmith"}, matches[attrGroupMemberPosix])
 
-		state, err := membershipState(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		state := membershipState(entry, resolvingIdentity(principal))
 		require.Equal(t, []string{attrGroupMemberPosix}, state.principalIn)
 		require.Equal(t, []string{"asmith"}, state.principalValues[attrGroupMemberPosix])
 	})
 
 	t.Run("the stored cn form is detected and deleted as stored", func(t *testing.T) {
 		entry := entryWithMemberUID("Alice Smith")
-		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		matches := matchPrincipal(entry, resolvingIdentity(principal))
 		require.Equal(t, []string{"Alice Smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("matching ignores case", func(t *testing.T) {
 		entry := entryWithMemberUID("ASMITH", "alice smith")
-		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		matches := matchPrincipal(entry, resolvingIdentity(principal))
 		require.Equal(t, []string{"ASMITH", "alice smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("a different member is not matched", func(t *testing.T) {
 		entry := entryWithMemberUID("bob")
-		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
-		require.Empty(t, matches)
-
-		state, err := membershipState(ctx, entry, principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
-		require.Empty(t, state.principalIn)
+		require.Empty(t, matchPrincipal(entry, resolvingIdentity(principal)))
+		require.Empty(t, membershipState(entry, resolvingIdentity(principal)).principalIn)
 	})
 
 	t.Run("the form the entry already uses is written", func(t *testing.T) {
-		require.Equal(t, "Alice Smith", memberUIDValue(entryWithMemberUID("Alice Smith"), principal))
-		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID("asmith"), principal))
+		resolved := resolvingIdentity(principal)
+		require.Equal(t, "Alice Smith", memberUIDValue(entryWithMemberUID("Alice Smith"), resolved))
+		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID("asmith"), resolved))
 	})
 
 	t.Run("an entry with no memberUid values gets the uid", func(t *testing.T) {
-		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID(), principal))
+		require.Equal(t, "asmith", memberUIDValue(entryWithMemberUID(), resolvingIdentity(principal)))
 	})
 
 	t.Run("a principal with no uid falls back to the first RDN value", func(t *testing.T) {
-		noUID := principalIdentity{dn: principal.dn, cn: "Alice Smith", rdn: "Alice Smith"}
+		noUID := resolvingIdentity(principalIdentity{dn: principal.dn, cn: "Alice Smith", rdn: "Alice Smith"})
 		require.Equal(t, "Alice Smith", memberUIDValue(entryWithMemberUID(), noUID))
 	})
 
 	t.Run("value selection for the DN-valued attributes is the principal's DN", func(t *testing.T) {
-		values, err := membershipValue(entryWithMemberUID(), principal, attrGroupMember)
+		values, err := membershipValue(entryWithMemberUID(), resolvingIdentity(principal), attrGroupMember)
 		require.NoError(t, err)
 		require.Equal(t, []string{principal.dn}, values)
 
-		values, err = membershipValue(entryWithMemberUID(), principal, attrGroupUniqueMember)
+		values, err = membershipValue(entryWithMemberUID(), resolvingIdentity(principal), attrGroupUniqueMember)
 		require.NoError(t, err)
 		require.Equal(t, []string{principal.dn}, values)
 
-		values, err = membershipValue(entryWithMemberUID(), principal, attrGroupMemberPosix)
+		values, err = membershipValue(entryWithMemberUID(), resolvingIdentity(principal), attrGroupMemberPosix)
 		require.NoError(t, err)
 		require.Equal(t, []string{"asmith"}, values)
 
-		_, err = membershipValue(entryWithMemberUID(), principal, "memberOf")
+		_, err = membershipValue(entryWithMemberUID(), resolvingIdentity(principal), "memberOf")
 		require.Error(t, err)
 	})
 }
@@ -645,8 +637,6 @@ func TestMemberUidForms(t *testing.T) {
 // comparison, the bare-login-name fallback the read path also applies, and that
 // an inherited membership is not a direct one.
 func TestMatchPrincipalDNValues(t *testing.T) {
-	ctx := t.Context()
-
 	entryWith := func(attr string, values ...string) *ldap3.Entry {
 		return &ldap3.Entry{
 			DN: "cn=g,ou=groups,dc=example,dc=org",
@@ -658,73 +648,89 @@ func TestMatchPrincipalDNValues(t *testing.T) {
 	principal := principalIdentity{dn: "cn=alice,ou=users,dc=example,dc=org", uid: "alice", cn: "alice", rdn: "alice"}
 
 	t.Run("a differently cased DN is the same member", func(t *testing.T) {
-		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "CN=Alice,OU=Users,DC=Example,DC=Org"), principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		matches := matchPrincipal(entryWith(attrGroupMember, "CN=Alice,OU=Users,DC=Example,DC=Org"), resolvingIdentity(principal))
 		require.Equal(t, []string{"CN=Alice,OU=Users,DC=Example,DC=Org"}, matches[attrGroupMember])
 	})
 
 	t.Run("another member is not matched", func(t *testing.T) {
-		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "cn=bob,ou=users,dc=example,dc=org"), principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
-		require.Empty(t, matches)
+		require.Empty(t, matchPrincipal(entryWith(attrGroupMember, "cn=bob,ou=users,dc=example,dc=org"), resolvingIdentity(principal)))
 	})
 
 	t.Run("a bare login name in a DN-valued attribute counts as the member", func(t *testing.T) {
 		// The read path resolves a value that does not parse as a DN through
 		// findMember, so a directory with schema checking off that stored a bare
 		// name in member still reports the membership.
-		matches, err := matchPrincipal(ctx, entryWith(attrGroupUniqueMember, "alice"), principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
+		matches := matchPrincipal(entryWith(attrGroupUniqueMember, "alice"), resolvingIdentity(principal))
 		require.Equal(t, []string{"alice"}, matches[attrGroupUniqueMember])
 	})
 
 	t.Run("a nested group is not the principal", func(t *testing.T) {
-		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "cn=sub,ou=groups,dc=example,dc=org"), principal, resolveToPrincipal(principal))
-		require.NoError(t, err)
-		require.Empty(t, matches)
+		require.Empty(t, matchPrincipal(entryWith(attrGroupMember, "cn=sub,ou=groups,dc=example,dc=org"), resolvingIdentity(principal)))
 	})
 }
 
-// TestRevokeAbsenceGuards covers the precedence between the two guards that keep
-// an absent direct membership from being reported as already revoked. Both
-// describe a membership the read path reports and that this connector cannot
-// remove, so neither may answer with a success.
-func TestRevokeAbsenceGuards(t *testing.T) {
+// TestRevokeOutcome covers the precedence between the two guards and the two ways a
+// revoke can end: with a direct membership removed by this call, or with none to
+// remove. Neither may answer with a plain success while a membership the read path
+// still reports -- a primary-group or inherited one -- remains.
+func TestRevokeOutcome(t *testing.T) {
 	const groupDN = "cn=g,ou=groups,dc=example,dc=org"
 	const principalDN = "cn=alice,ou=users,dc=example,dc=org"
 
-	t.Run("no guard matches -> already revoked", func(t *testing.T) {
-		annos, err := decideRevokeAbsence(revokeAbsence{}, groupDN, principalDN)
+	t.Run("nothing remains, nothing removed -> already revoked", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(false, revokeAbsence{}, groupDN, principalDN)
 		require.NoError(t, err)
-		require.NotNil(t, annos)
 		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 	})
 
-	t.Run("the primary group is reported, not revoked", func(t *testing.T) {
-		annos, err := decideRevokeAbsence(revokeAbsence{primaryGroup: true}, groupDN, principalDN)
+	t.Run("nothing remains, direct membership removed -> success", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(true, revokeAbsence{}, groupDN, principalDN)
+		require.NoError(t, err)
+		require.Nil(t, annos)
+	})
+
+	t.Run("the primary group remains -> reported, not revoked", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(false, revokeAbsence{primaryGroup: true}, groupDN, principalDN)
 		require.Error(t, err)
 		require.Nil(t, annos)
 		require.ErrorContains(t, err, "primary group")
 	})
 
+	t.Run("the primary group remains after a direct delete -> reported, not removed", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(true, revokeAbsence{primaryGroup: true}, groupDN, principalDN)
+		require.Error(t, err)
+		require.Nil(t, annos)
+		require.ErrorContains(t, err, "removed the direct membership")
+		require.ErrorContains(t, err, "primary group")
+	})
+
 	t.Run("an inherited membership names its source", func(t *testing.T) {
-		annos, err := decideRevokeAbsence(
+		annos, err := decideRevokeOutcome(false,
 			revokeAbsence{inheritedVia: "cn=sub,ou=groups,dc=example,dc=org"}, groupDN, principalDN)
 		require.Error(t, err)
 		require.Nil(t, annos)
 		require.ErrorContains(t, err, "cn=sub,ou=groups,dc=example,dc=org")
 	})
 
+	t.Run("an inherited membership that outlives a direct delete is reported", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(true,
+			revokeAbsence{inheritedVia: "cn=sub,ou=groups,dc=example,dc=org"}, groupDN, principalDN)
+		require.Error(t, err)
+		require.Nil(t, annos)
+		require.ErrorContains(t, err, "removed the direct membership")
+		require.ErrorContains(t, err, "inherited via")
+	})
+
 	t.Run("the primary group wins when both guards match", func(t *testing.T) {
-		annos, err := decideRevokeAbsence(
+		annos, err := decideRevokeOutcome(false,
 			revokeAbsence{primaryGroup: true, inheritedVia: "cn=sub,ou=groups,dc=example,dc=org"}, groupDN, principalDN)
 		require.Error(t, err)
 		require.Nil(t, annos)
 		require.ErrorContains(t, err, "primary group")
 	})
 
-	t.Run("a search cut short by the depth cap is not already revoked", func(t *testing.T) {
-		annos, err := decideRevokeAbsence(revokeAbsence{truncated: true}, groupDN, principalDN)
+	t.Run("a search cut short by a cap is not already revoked", func(t *testing.T) {
+		annos, err := decideRevokeOutcome(false, revokeAbsence{truncated: true}, groupDN, principalDN)
 		require.Error(t, err)
 		require.Nil(t, annos)
 		require.ErrorContains(t, err, "nested-group search")
@@ -780,16 +786,14 @@ func TestInheritedSourceFromGrant(t *testing.T) {
 	})
 }
 
-// TestNameCandidateResolvedElsewhere covers the confirmation of a name-valued
-// candidate: a stored memberUid value that is one of the principal's own names can
-// still resolve to a different entry, because findMember resolves by uid first and
-// by cn second. Counting it as a match would answer GrantAlreadyExists without
-// writing, and -- worse -- let a revoke delete another user's membership.
+// TestNameCandidateResolvedElsewhere covers a name-valued membership value that
+// belongs to another entry: findMember resolves a login name by uid first and cn
+// second, so a value equal to the principal's cn can be another user's uid. The
+// principal holds no membership there, and -- the dangerous direction -- a revoke
+// must not delete the value, and a grant must not write from that name.
 func TestNameCandidateResolvedElsewhere(t *testing.T) {
-	ctx := t.Context()
-
 	// The principal is cn=bob (uid aliceb); the group stores the uid of a
-	// different user: bob.
+	// different user, "bob".
 	principal := principalIdentity{dn: "cn=bob,ou=users,dc=example,dc=org", uid: "aliceb", cn: "bob", rdn: "bob"}
 	entry := &ldap3.Entry{
 		DN: "cn=g,ou=groups,dc=example,dc=org",
@@ -799,20 +803,32 @@ func TestNameCandidateResolvedElsewhere(t *testing.T) {
 		},
 	}
 
-	// The candidate pass sees a name it recognises...
-	require.True(t, principal.holdsName("bob"), "the precondition for the collision: the value is one of the principal's names")
+	// The value is one of the principal's names, which is what makes it a
+	// candidate at all.
+	require.Contains(t, principal.nameCandidates(), "bob")
 
-	// ...and the read path's resolution says it belongs to someone else.
-	matches, err := matchPrincipal(ctx, entry, principal, resolveToOther("cn=robert,ou=users,dc=example,dc=org"))
-	require.NoError(t, err)
-	require.Empty(t, matches, "a value that resolves to another entry is not the principal's membership")
-
-	state, err := membershipState(ctx, entry, principal, resolveToOther("cn=robert,ou=users,dc=example,dc=org"))
-	require.NoError(t, err)
+	// The read path resolves it to another entry, so it is not this principal's
+	// membership: nothing to revoke...
+	claimed := identityClaimedByAnotherEntry(principal)
+	require.Empty(t, matchPrincipal(entry, claimed))
+	state := membershipState(entry, claimed)
 	require.Empty(t, state.principalIn)
 	require.False(t, planGroupMembership(state).present)
+	require.False(t, groupHoldsPrincipal(entry, claimed))
 
-	// A DN-valued match does not need the confirmation: it is exact.
+	// ...and it must not be chosen as the value to write either: the Add would
+	// come back 20 (the value is the other user's) and the grant would report
+	// already-exists without writing anything.
+	require.Empty(t, memberUIDValue(entry, claimed))
+
+	// The realistic shape of the collision: the uid resolves to the principal, the
+	// cn (the value the entry stores) does not. The write falls back to the uid,
+	// which is a form the group does not use yet but the read path resolves.
+	uidOnly := principal
+	uidOnly.resolvedNames = []string{"aliceb"}
+	require.Equal(t, "aliceb", memberUIDValue(entry, uidOnly))
+
+	// A DN-valued match does not depend on name resolution.
 	dnEntry := &ldap3.Entry{
 		DN: "cn=g,ou=groups,dc=example,dc=org",
 		Attributes: []*ldap3.EntryAttribute{
@@ -820,12 +836,42 @@ func TestNameCandidateResolvedElsewhere(t *testing.T) {
 			{Name: "member", Values: []string{"CN=Bob,OU=Users,DC=Example,DC=Org"}},
 		},
 	}
-	resolver := func(_ context.Context, value string) (string, error) {
-		return "", fmt.Errorf("the resolver must not be asked about the DN value %q", value)
+	require.Equal(t, []string{"CN=Bob,OU=Users,DC=Example,DC=Org"},
+		matchPrincipal(dnEntry, claimed)[attrGroupMember],
+		"a DN-valued value is exact and needs no name resolution")
+}
+
+// TestMemberUIDValueUsesOnlyResolvedNames covers the write-form choice: only names
+// the read path resolves to the principal are usable, the entry's own form wins
+// among those, and a principal whose names all resolve elsewhere has no form at all
+// (the grant must fail rather than write a value sync cannot see).
+func TestMemberUIDValueUsesOnlyResolvedNames(t *testing.T) {
+	principal := principalIdentity{
+		dn:            "cn=alice smith,ou=users,dc=example,dc=org",
+		uid:           "asmith",
+		cn:            "Alice Smith",
+		rdn:           "Alice Smith",
+		resolvedNames: []string{"asmith", "Alice Smith"},
 	}
-	matches, err = matchPrincipal(ctx, dnEntry, principal, resolver)
-	require.NoError(t, err)
-	require.Equal(t, []string{"CN=Bob,OU=Users,DC=Example,DC=Org"}, matches[attrGroupMember])
+	entryWith := func(values ...string) *ldap3.Entry {
+		return &ldap3.Entry{
+			DN: "cn=g,ou=groups,dc=example,dc=org",
+			Attributes: []*ldap3.EntryAttribute{
+				{Name: "memberUid", Values: values},
+			},
+		}
+	}
+
+	require.Equal(t, "Alice Smith", memberUIDValue(entryWith("Alice Smith"), principal),
+		"the form the entry already uses, when it resolves to the principal")
+	require.Equal(t, "asmith", memberUIDValue(entryWith("bob"), principal),
+		"otherwise the uid, which is the first resolved name")
+	require.Equal(t, "asmith", memberUIDValue(entryWith(), principal),
+		"an empty memberUid set gets the uid")
+
+	noNames := principalIdentity{dn: principal.dn, uid: principal.uid, cn: principal.cn, rdn: principal.rdn}
+	require.Empty(t, memberUIDValue(entryWith("Alice Smith"), noNames),
+		"a principal whose names resolve elsewhere has no memberUid form to write")
 }
 
 // TestInheritedTraversalLookupCap covers the traversal's total-lookup cap: a
@@ -833,7 +879,7 @@ func TestNameCandidateResolvedElsewhere(t *testing.T) {
 // revoked". The traversal needs a directory, so this asserts the decision side of
 // it -- the same shape the depth cap produces.
 func TestInheritedTraversalLookupCap(t *testing.T) {
-	annos, err := decideRevokeAbsence(revokeAbsence{truncated: true},
+	annos, err := decideRevokeOutcome(false, revokeAbsence{truncated: true},
 		"cn=g,ou=groups,dc=example,dc=org", "cn=alice,ou=users,dc=example,dc=org")
 	require.Error(t, err)
 	require.Nil(t, annos)
