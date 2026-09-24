@@ -76,3 +76,28 @@ objectclass: top
 cn: outer
 description: Outer group (holds inner)
 member: cn=inner,ou=groups,dc=example,dc=org
+
+# A uid/cn collision: "dave" is the uid of cn=robert and the cn of cn=dave.
+# findMember resolves a stored name by uid first, so a group storing
+# memberUid: dave holds robert's membership, not dave's. A revoke for cn=dave must
+# therefore not delete that value.
+dn: cn=robert,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: robert
+sn: Jones
+uid: dave
+
+dn: cn=dave,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: dave
+sn: Carter
+uid: robertd
+
+dn: cn=collision,ou=groups,dc=example,dc=org
+objectclass: posixGroup
+objectclass: top
+cn: collision
+gidnumber: 4020
+memberUid: dave

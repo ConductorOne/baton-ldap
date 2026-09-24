@@ -322,8 +322,9 @@ Known limits:
 - A membership attribute outside these three (a site-specific attribute) is invisible to sync and to
   provisioning alike.
 - Nested groups are read (as expandable grants) and the inherited-membership guard covers a revoke of
-  the expanded grant; the traversal that detects inheritance is depth-capped, and a chain deeper than
-  the cap is reported as an error rather than as "already revoked".
+  the expanded grant; the traversal that detects inheritance is depth-capped (5 levels) and
+  lookup-capped (50 entries), and a search that stops at either bound is reported as an error rather
+  than as "already revoked".
 - Removing the last member of a `groupOfNames` can be rejected by the server (`member` is a MUST
   attribute of that class). That is unchanged.
 - Role membership still writes through `baton-ldap`'s idempotent-error-swallowing modify path, so a

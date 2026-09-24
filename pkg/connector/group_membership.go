@@ -323,13 +323,39 @@ type principalNameForms struct {
 // Only this group's own stored values are examined: an inherited membership must
 // not look like a direct one, or a grant would report success off the back of
 // another group's membership and a revoke would remove the wrong thing.
-func matchPrincipal(entry *ldap3.Entry, id principalIdentity) map[string][]string {
+// principalMatchResolver resolves a stored login-name value to the DN the read
+// path reports for it, and returns an empty string when nothing resolves. It is
+// findMember in production; tests pass a stub.
+type principalMatchResolver func(ctx context.Context, value string) (string, error)
+
+// matchPrincipal reports, per membership attribute, the exact stored values that
+// name the principal. A nil answer means the principal is in none of them.
+//
+// Only this group's own stored values are examined: an inherited membership must
+// not look like a direct one, or a grant would report success off the back of
+// another group's membership and a revoke would remove the wrong thing.
+//
+// A DN-valued match is exact: the value canonicalizes to the principal's DN. A
+// name-valued match (memberUid, or a bare name in a DN-valued attribute) is only a
+// candidate until resolve confirms it, because findMember resolves a stored value
+// by uid and then by cn -- so a value that is one of the principal's own names can
+// still belong to another entry, a user whose uid equals this principal's cn. The
+// confirmation is what keeps a revoke from deleting that other user's membership.
+func matchPrincipal(ctx context.Context, entry *ldap3.Entry, id principalIdentity, resolve principalMatchResolver) (map[string][]string, error) {
 	var rv map[string][]string
 	add := func(attr, value string) {
 		if rv == nil {
 			rv = make(map[string][]string, len(membershipAttrs))
 		}
 		rv[attr] = append(rv[attr], value)
+	}
+
+	confirm := func(value string) (bool, error) {
+		memberDN, err := resolve(ctx, value)
+		if err != nil {
+			return false, err
+		}
+		return strings.EqualFold(memberDN, id.dn), nil
 	}
 
 	for _, attr := range []string{attrGroupMember, attrGroupUniqueMember} {
@@ -346,26 +372,50 @@ func matchPrincipal(entry *ldap3.Entry, id principalIdentity) map[string][]strin
 			}
 			// A value that is not a DN is resolved as a login name by the read
 			// path (the same findMember fallback memberUid uses), so a bare name
-			// stored in a DN-valued attribute still counts as the principal.
-			if id.holdsName(value) {
+			// stored in a DN-valued attribute can still name the principal.
+			if !id.holdsName(value) {
+				continue
+			}
+			ok, err := confirm(value)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
 				add(attr, value)
 			}
 		}
 	}
 
 	for _, value := range entry.GetEqualFoldAttributeValues(attrGroupMemberPosix) {
-		if id.holdsName(value) {
+		if !id.holdsName(value) {
+			continue
+		}
+		ok, err := confirm(value)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			add(attrGroupMemberPosix, value)
 		}
 	}
 
-	return rv
+	return rv, nil
+}
+
+// resolveMemberName is the production resolver: the read path's own lookup of a
+// stored login name, uid first and then cn.
+func (g *groupResourceType) resolveMemberName(ctx context.Context, value string) (string, error) {
+	return g.findMember(ctx, value)
 }
 
 // membershipState builds the decision input from the group entry and the
-// principal's identity. It performs no I/O.
-func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipState {
-	matches := matchPrincipal(entry, id)
+// principal's identity, confirming every name-valued candidate through resolve.
+func membershipState(ctx context.Context, entry *ldap3.Entry, id principalIdentity, resolve principalMatchResolver) (groupMembershipState, error) {
+	matches, err := matchPrincipal(ctx, entry, id, resolve)
+	if err != nil {
+		return groupMembershipState{}, err
+	}
+
 	attrs := make([]string, 0, len(matches))
 	for attr := range matches {
 		attrs = append(attrs, attr)
@@ -382,7 +432,7 @@ func membershipState(entry *ldap3.Entry, id principalIdentity) groupMembershipSt
 		memberUID:       entry.GetEqualFoldAttributeValues(attrGroupMemberPosix),
 		principalIn:     sortedByDocumentedOrder(attrs),
 		principalValues: matches,
-	}
+	}, nil
 }
 
 // memberUIDValue returns the memberUid value to write for the principal.
@@ -515,7 +565,7 @@ func (g *groupResourceType) groupHoldsPrincipal(ctx context.Context, l *zap.Logg
 			if !id.holdsName(value) {
 				continue
 			}
-			memberDN, err := g.findMember(ctx, value)
+			memberDN, err := g.resolveMemberName(ctx, value)
 			if err != nil {
 				return false, err
 			}
@@ -690,8 +740,9 @@ type revokeAbsence struct {
 	// inheritedVia names the source of an inherited membership, empty when the
 	// membership is not inherited.
 	inheritedVia string
-	// truncated is true when the nested-group search stopped at its depth cap
-	// without finding the principal, so "not inherited" is not established.
+	// truncated is true when the nested-group search stopped at one of its bounds
+	// -- the depth cap or the total-lookup cap -- without finding the principal, so
+	// "not inherited" is not established.
 	truncated bool
 }
 
@@ -717,7 +768,8 @@ func decideRevokeAbsence(absence revokeAbsence, groupDN string, principalDN stri
 	case absence.truncated:
 		return nil, fmt.Errorf(
 			"baton-ldap: cannot revoke %q from group %q: no direct membership was found, and the nested-group search "+
-				"stopped at %d levels without establishing that there is none", principalDN, groupDN, inheritedMembershipDepth)
+				"stopped early (after %d levels or %d entries) without establishing that there is none",
+			principalDN, groupDN, inheritedMembershipDepth, inheritedMembershipLookupCap)
 	}
 
 	return annotations.New(&v2.GrantAlreadyRevoked{}), nil
@@ -759,6 +811,13 @@ func (g *groupResourceType) primaryGroupMember(ctx context.Context, group *ldap3
 // this reports that it was cut short rather than answering "not inherited", so a
 // depth-capped search can never produce a false "already revoked".
 const inheritedMembershipDepth = 5
+
+// inheritedMembershipLookupCap bounds how many entries the traversal reads in
+// total. Most of a group's member values are users, and each one costs a lookup
+// that comes back "not a group", so without a cap a revoke of an already-removed
+// member on a very large group would spend one search per member. Hitting the cap
+// is reported the same way as the depth cap, never as "not inherited".
+const inheritedMembershipLookupCap = 50
 
 // inheritedSourceFromGrant reads the received grant's Sources.
 //
@@ -820,17 +879,19 @@ func (g *groupResourceType) inheritedVia(ctx context.Context, l *zap.Logger, gro
 func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Logger, groupDN string, id principalIdentity) (string, bool, error) {
 	visited := make(map[string]bool)
 	truncated := false
+	lookups := 0
 
 	var walk func(dn string, depth int) (string, error)
 	walk = func(dn string, depth int) (string, error) {
 		if visited[dn] {
 			return "", nil
 		}
-		if depth > inheritedMembershipDepth {
+		if depth > inheritedMembershipDepth || lookups >= inheritedMembershipLookupCap {
 			truncated = true
 			return "", nil
 		}
 		visited[dn] = true
+		lookups++
 
 		entry, err := g.getGroup(ctx, dn)
 		if err != nil {
@@ -852,6 +913,10 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 				continue
 			}
 
+			if lookups >= inheritedMembershipLookupCap {
+				truncated = true
+				return "", nil
+			}
 			member, err := g.getGroup(ctx, memberDN)
 			if err != nil {
 				if isNotFound(err) {
@@ -859,6 +924,7 @@ func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Lo
 				}
 				return "", err
 			}
+			lookups++
 
 			holds, err := g.groupHoldsPrincipal(ctx, l, member, id)
 			if err != nil {
@@ -961,7 +1027,10 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, err
 	}
 
-	state := membershipState(group, id)
+	state, err := membershipState(ctx, group, id, g.resolveMemberName)
+	if err != nil {
+		return nil, err
+	}
 	plan := planGroupMembership(state)
 
 	if plan.dynamic {
@@ -1028,7 +1097,10 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 		return nil, err
 	}
 
-	state := membershipState(group, id)
+	state, err := membershipState(ctx, group, id, g.resolveMemberName)
+	if err != nil {
+		return nil, err
+	}
 	plan := planGroupMembership(state)
 
 	if plan.dynamic {
@@ -1059,7 +1131,11 @@ func (g *groupResourceType) Revoke(ctx context.Context, gr *v2.Grant) (annotatio
 		}
 		return nil, err
 	}
-	if planGroupMembership(membershipState(fresh, id)).present {
+	freshState, err := membershipState(ctx, fresh, id, g.resolveMemberName)
+	if err != nil {
+		return nil, err
+	}
+	if planGroupMembership(freshState).present {
 		return nil, retryableMembershipError(
 			"the membership of %q in %q is still present after the delete reported it absent", id.dn, groupDN)
 	}

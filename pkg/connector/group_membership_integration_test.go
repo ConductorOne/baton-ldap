@@ -315,3 +315,35 @@ func TestRfc2307bisCoexistGrantFollowsContent(t *testing.T) {
 	require.NotContains(t, groupEntryValues(ctx, t, connector, coexistDN, attrGroupMemberPosix), "carol")
 	require.Contains(t, groupEntryValues(ctx, t, connector, coexistDN, attrGroupMember), fixtureBobDN)
 }
+
+// TestMemberUIDThatResolvesToAnotherUser covers the uid/cn collision. The group
+// stores memberUid: dave, which is the uid of cn=robert and the cn of cn=dave.
+// findMember resolves a name by uid first, so the membership is robert's; counting
+// the stored value as dave's membership would make Revoke delete another user's
+// value from the group.
+func TestMemberUIDThatResolvesToAnotherUser(t *testing.T) {
+	ctx := t.Context()
+	gb, connector := groupMembershipFixture(ctx, t)
+
+	const (
+		collisionDN = "cn=collision,ou=groups,dc=example,dc=org"
+		robertDN    = "cn=robert,ou=users,dc=example,dc=org"
+		daveDN      = "cn=dave,ou=users,dc=example,dc=org"
+	)
+
+	group := groupResourceFor(ctx, t, gb, collisionDN)
+	entitlement := membershipEntitlementFor(ctx, t, gb, group)
+
+	// The value belongs to robert, and the read path says so.
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), robertDN)
+	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), daveDN)
+
+	annos, err := gb.Revoke(ctx, membershipGrant(daveDN, entitlement))
+	require.NoError(t, err)
+	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}), "dave is not a member; the value is robert's")
+
+	require.Contains(t, groupEntryValues(ctx, t, connector, collisionDN, attrGroupMemberPosix), "dave",
+		"another user's membership value must not be deleted")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), robertDN,
+		"the read path must still report robert's membership")
+}

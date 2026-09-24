@@ -198,6 +198,19 @@ func ldapCodeError(code uint16, message string) error {
 
 func testLogger() *zap.Logger { return zap.NewNop() }
 
+// resolveToPrincipal is the stub resolver for the tests that exercise the
+// candidate rules only: it assumes a stored name resolves to the principal,
+// which is the case the read path decides with its uid-then-cn search.
+func resolveToPrincipal(id principalIdentity) principalMatchResolver {
+	return func(_ context.Context, _ string) (string, error) { return id.dn, nil }
+}
+
+// resolveToOther is the stub for the collision case: the stored name belongs to
+// another entry.
+func resolveToOther(dn string) principalMatchResolver {
+	return func(_ context.Context, _ string) (string, error) { return dn, nil }
+}
+
 // fakeEffects records what the loops did and answers with what the test says a
 // directory would have answered.
 type fakeEffects struct {
@@ -540,6 +553,8 @@ func TestPinnedGrant(t *testing.T) {
 // login names is written, and that a stored value in either form is matched
 // (and deleted) exactly as stored.
 func TestMemberUidForms(t *testing.T) {
+	ctx := t.Context()
+
 	entryWithMemberUID := func(values ...string) *ldap3.Entry {
 		return &ldap3.Entry{
 			DN: "cn=g,ou=groups,dc=example,dc=org",
@@ -559,30 +574,39 @@ func TestMemberUidForms(t *testing.T) {
 
 	t.Run("the stored uid form is detected and deleted as stored", func(t *testing.T) {
 		entry := entryWithMemberUID("asmith")
-		matches := matchPrincipal(entry, principal)
+		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{"asmith"}, matches[attrGroupMemberPosix])
 
-		state := membershipState(entry, principal)
+		state, err := membershipState(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{attrGroupMemberPosix}, state.principalIn)
 		require.Equal(t, []string{"asmith"}, state.principalValues[attrGroupMemberPosix])
 	})
 
 	t.Run("the stored cn form is detected and deleted as stored", func(t *testing.T) {
 		entry := entryWithMemberUID("Alice Smith")
-		matches := matchPrincipal(entry, principal)
+		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{"Alice Smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("matching ignores case", func(t *testing.T) {
 		entry := entryWithMemberUID("ASMITH", "alice smith")
-		matches := matchPrincipal(entry, principal)
+		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{"ASMITH", "alice smith"}, matches[attrGroupMemberPosix])
 	})
 
 	t.Run("a different member is not matched", func(t *testing.T) {
 		entry := entryWithMemberUID("bob")
-		require.Empty(t, matchPrincipal(entry, principal))
-		require.Empty(t, membershipState(entry, principal).principalIn)
+		matches, err := matchPrincipal(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
+		require.Empty(t, matches)
+
+		state, err := membershipState(ctx, entry, principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
+		require.Empty(t, state.principalIn)
 	})
 
 	t.Run("the form the entry already uses is written", func(t *testing.T) {
@@ -621,6 +645,8 @@ func TestMemberUidForms(t *testing.T) {
 // comparison, the bare-login-name fallback the read path also applies, and that
 // an inherited membership is not a direct one.
 func TestMatchPrincipalDNValues(t *testing.T) {
+	ctx := t.Context()
+
 	entryWith := func(attr string, values ...string) *ldap3.Entry {
 		return &ldap3.Entry{
 			DN: "cn=g,ou=groups,dc=example,dc=org",
@@ -632,24 +658,30 @@ func TestMatchPrincipalDNValues(t *testing.T) {
 	principal := principalIdentity{dn: "cn=alice,ou=users,dc=example,dc=org", uid: "alice", cn: "alice", rdn: "alice"}
 
 	t.Run("a differently cased DN is the same member", func(t *testing.T) {
-		matches := matchPrincipal(entryWith(attrGroupMember, "CN=Alice,OU=Users,DC=Example,DC=Org"), principal)
+		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "CN=Alice,OU=Users,DC=Example,DC=Org"), principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{"CN=Alice,OU=Users,DC=Example,DC=Org"}, matches[attrGroupMember])
 	})
 
 	t.Run("another member is not matched", func(t *testing.T) {
-		require.Empty(t, matchPrincipal(entryWith(attrGroupMember, "cn=bob,ou=users,dc=example,dc=org"), principal))
+		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "cn=bob,ou=users,dc=example,dc=org"), principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
+		require.Empty(t, matches)
 	})
 
 	t.Run("a bare login name in a DN-valued attribute counts as the member", func(t *testing.T) {
 		// The read path resolves a value that does not parse as a DN through
 		// findMember, so a directory with schema checking off that stored a bare
 		// name in member still reports the membership.
-		matches := matchPrincipal(entryWith(attrGroupUniqueMember, "alice"), principal)
+		matches, err := matchPrincipal(ctx, entryWith(attrGroupUniqueMember, "alice"), principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
 		require.Equal(t, []string{"alice"}, matches[attrGroupUniqueMember])
 	})
 
 	t.Run("a nested group is not the principal", func(t *testing.T) {
-		require.Empty(t, matchPrincipal(entryWith(attrGroupMember, "cn=sub,ou=groups,dc=example,dc=org"), principal))
+		matches, err := matchPrincipal(ctx, entryWith(attrGroupMember, "cn=sub,ou=groups,dc=example,dc=org"), principal, resolveToPrincipal(principal))
+		require.NoError(t, err)
+		require.Empty(t, matches)
 	})
 }
 
@@ -746,6 +778,66 @@ func TestInheritedSourceFromGrant(t *testing.T) {
 		require.Equal(t, "", inheritedSourceFromGrant(
 			grantWith(map[string]bool{subgroupEntitlement: false, ownEntitlement: true})))
 	})
+}
+
+// TestNameCandidateResolvedElsewhere covers the confirmation of a name-valued
+// candidate: a stored memberUid value that is one of the principal's own names can
+// still resolve to a different entry, because findMember resolves by uid first and
+// by cn second. Counting it as a match would answer GrantAlreadyExists without
+// writing, and -- worse -- let a revoke delete another user's membership.
+func TestNameCandidateResolvedElsewhere(t *testing.T) {
+	ctx := t.Context()
+
+	// The principal is cn=bob (uid aliceb); the group stores the uid of a
+	// different user: bob.
+	principal := principalIdentity{dn: "cn=bob,ou=users,dc=example,dc=org", uid: "aliceb", cn: "bob", rdn: "bob"}
+	entry := &ldap3.Entry{
+		DN: "cn=g,ou=groups,dc=example,dc=org",
+		Attributes: []*ldap3.EntryAttribute{
+			{Name: "objectClass", Values: []string{"top", "posixGroup"}},
+			{Name: "memberUid", Values: []string{"bob"}},
+		},
+	}
+
+	// The candidate pass sees a name it recognises...
+	require.True(t, principal.holdsName("bob"), "the precondition for the collision: the value is one of the principal's names")
+
+	// ...and the read path's resolution says it belongs to someone else.
+	matches, err := matchPrincipal(ctx, entry, principal, resolveToOther("cn=robert,ou=users,dc=example,dc=org"))
+	require.NoError(t, err)
+	require.Empty(t, matches, "a value that resolves to another entry is not the principal's membership")
+
+	state, err := membershipState(ctx, entry, principal, resolveToOther("cn=robert,ou=users,dc=example,dc=org"))
+	require.NoError(t, err)
+	require.Empty(t, state.principalIn)
+	require.False(t, planGroupMembership(state).present)
+
+	// A DN-valued match does not need the confirmation: it is exact.
+	dnEntry := &ldap3.Entry{
+		DN: "cn=g,ou=groups,dc=example,dc=org",
+		Attributes: []*ldap3.EntryAttribute{
+			{Name: "objectClass", Values: []string{"top", "groupOfNames"}},
+			{Name: "member", Values: []string{"CN=Bob,OU=Users,DC=Example,DC=Org"}},
+		},
+	}
+	resolver := func(_ context.Context, value string) (string, error) {
+		return "", fmt.Errorf("the resolver must not be asked about the DN value %q", value)
+	}
+	matches, err = matchPrincipal(ctx, dnEntry, principal, resolver)
+	require.NoError(t, err)
+	require.Equal(t, []string{"CN=Bob,OU=Users,DC=Example,DC=Org"}, matches[attrGroupMember])
+}
+
+// TestInheritedTraversalLookupCap covers the traversal's total-lookup cap: a
+// search that stops at the cap must report that it stopped, never "already
+// revoked". The traversal needs a directory, so this asserts the decision side of
+// it -- the same shape the depth cap produces.
+func TestInheritedTraversalLookupCap(t *testing.T) {
+	annos, err := decideRevokeAbsence(revokeAbsence{truncated: true},
+		"cn=g,ou=groups,dc=example,dc=org", "cn=alice,ou=users,dc=example,dc=org")
+	require.Error(t, err)
+	require.Nil(t, annos)
+	require.ErrorContains(t, err, "stopped early")
 }
 
 // TestMembershipBlastRadiusReport is a report, not an assertion. It prints what

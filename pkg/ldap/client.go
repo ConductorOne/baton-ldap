@@ -480,7 +480,17 @@ func (c *Client) LdapModifyStrictAndConfirm(
 		// a safe thing to do on its behalf.
 		for attempt := 1; attempt <= confirmReadAttempts; attempt++ {
 			if attempt > 1 {
-				time.Sleep(confirmReadRetryDelay)
+				// A context-aware wait: the connection is held for the whole loop,
+				// so a cancelled call must give it back now rather than after the
+				// delay.
+				timer := time.NewTimer(confirmReadRetryDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					confirmationErr = ctx.Err()
+					return nil
+				case <-timer.C:
+				}
 			}
 			entry, err := searchOnConnection(client, modifyRequest.DN, attrNames)
 			if err != nil {
