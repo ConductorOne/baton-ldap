@@ -339,10 +339,12 @@ Known limits:
   than five levels, is reported as "could not establish that there is no inherited membership" rather
   than as "already revoked". Those bounds apply to the principal's **whole** ancestry, not only to the
   chain that reaches the group being revoked from: the walk cannot know which ancestor matters without
-  exploring it, so a user whose memberships nest more than five levels deep, or reach more groups than
-  one search page, gets that answer for every revoke of theirs. The alternative -- resolving the group's
-  members one by one to find the group-valued ones -- is what made a revoke on an ordinary group report
-  failure after it had removed the value.
+  exploring it. So a user whose memberships nest more than five levels deep, or reach more groups than
+  one search page, anywhere in the directory gets a **permanent, non-retryable error on every revoke of
+  theirs** -- none of their revokes can complete until that nesting is changed. The alternative, aiming
+  the walk at the group being revoked from, means resolving that group's members one by one to find the
+  group-valued ones, which is what made a revoke on an ordinary group report failure after it had
+  already removed the value. This limit is the trade for not doing that.
 - A `memberUid` value that is not the principal's `uid` is resolved by `cn`, and that search asks for a
   single entry: if the name matches more than one user, whichever one the server returns first decides
   the membership. (Only reachable when the `uid` does not resolve, and unchanged from how sync has
