@@ -55,7 +55,7 @@ type LDAP struct {
 func (l *LDAP) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
 	return []connectorbuilder.ResourceSyncer{
 		userBuilder(l.client, l.config.UserSearchDN, l.config.DisableOperationalAttrs, l.config.UserStatusAttributes),
-		groupBuilder(l.client, l.config.GroupSearchDN, l.config.UserSearchDN, l.config.BaseDN, l.config.EffectiveGroupMemberAttribute()),
+		groupBuilder(l.client, l.config.GroupSearchDN, l.config.UserSearchDN, l.config.EffectiveGroupMemberAttribute()),
 		roleBuilder(l.client, l.config.RoleSearchDN),
 	}
 }

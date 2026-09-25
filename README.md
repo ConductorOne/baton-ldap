@@ -307,13 +307,16 @@ So the connector observes the group entry and lets the server be the authority:
 
 A revoke is different, deliberately. It deletes the **exact stored values** that hold the principal,
 from **every** attribute that holds them, in one atomic request -- never from a guess, and never from
-an attribute the operator pinned. It then checks two memberships it cannot remove and reports them
-instead of a false success: a membership that comes from the user's own `gidNumber` (the group is a
-primary group), and a membership inherited through a nested group (the group is a member of this
-one). That check runs whether or not this call found a direct membership to delete: a principal who is
-a direct member *and* a primary-group member keeps the group membership after the direct value is
-removed, and the next sync would report the grant again. When neither applies, the revoke answers a
-plain success if it removed a direct membership and `GrantAlreadyRevoked` if there was none.
+an attribute the operator pinned. It acts on the group's own attributes and on nothing else: a
+membership this connector does not hold there is not its to revoke (see the nested-group limit below).
+
+One membership the connector *does* report, and that no write here can remove, is checked before the
+revoke answers success: the user's primary group, which the connector mints from the user entry's own
+`gidNumber`. That check runs whether or not this call found a direct membership to delete, because a
+principal who is a direct member *and* a primary-group member keeps the group membership after the
+direct value is removed, and the next sync would report the grant again. When it applies, the revoke
+names that and says what to change instead; otherwise it answers a plain success if it removed a direct
+membership and `GrantAlreadyRevoked` if there was none.
 
 `memberUid` values are written from the names the directory actually resolves to the principal, and
 only from those. `memberUid` holds a login name, and a name can be another user's: with `uid=dave` on
@@ -332,19 +335,12 @@ Known limits:
   write side; with a different spelling, as a static group. This change does not alter that.
 - A membership attribute outside these three (a site-specific attribute) is invisible to sync and to
   provisioning alike.
-- Nested groups are read (as expandable grants) and the inherited-membership guard covers a revoke of
-  the expanded grant. The check walks **up** from the principal -- the groups that name the principal,
-  then the groups that contain those, to five levels -- so its cost depends on the nesting around the
-  principal and not on how many members the group has. A search that fills its page, or a chain deeper
-  than five levels, is reported as "could not establish that there is no inherited membership" rather
-  than as "already revoked". Those bounds apply to the principal's **whole** ancestry, not only to the
-  chain that reaches the group being revoked from: the walk cannot know which ancestor matters without
-  exploring it. So a user whose memberships nest more than five levels deep, or reach more groups than
-  one search page, anywhere in the directory gets a **permanent, non-retryable error on every revoke of
-  theirs** -- none of their revokes can complete until that nesting is changed. The alternative, aiming
-  the walk at the group being revoked from, means resolving that group's members one by one to find the
-  group-valued ones, which is what made a revoke on an ordinary group report failure after it had
-  already removed the value. This limit is the trade for not doing that.
+- Nested groups are read (as expandable grants), so a member value that resolves to a group becomes a
+  grant on this group that C1 expands. **Revoking membership here does not touch that expansion**: a
+  revoke removes membership from the group's own attributes, and a membership held only through a nested
+  group is not this connector's to revoke. A revoke for such a principal answers `GrantAlreadyRevoked`,
+  changes nothing in the directory, and the membership reappears on the next sync -- revoke it at the
+  source group instead (the one whose own attributes hold the member).
 - A `memberUid` value that is not the principal's `uid` is resolved by `cn`, and that search asks for a
   single entry: if the name matches more than one user, whichever one the server returns first decides
   the membership. (Only reachable when the `uid` does not resolve, and unchanged from how sync has

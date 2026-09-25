@@ -102,16 +102,14 @@ cn: collision
 gidnumber: 4020
 memberUid: dave
 
-# A group with 60 members: an ordinary group, and the case that made a revoke fail.
-# The inheritance guard used to read one entry per member to find the group-valued
-# ones, and its cap then reported a cut-short search for any group this size, so a
-# revoke deleted the value and still returned a non-retryable error. The guard now
-# walks up from the principal instead, so the cost does not depend on this number.
+# A group with 60 members: an ordinary group, and the size that used to make a
+# revoke fail while the inheritance guard walked this group's members one by one.
+# That walk is gone; this fixture keeps the size covered for the direct path.
 dn: cn=big,ou=groups,dc=example,dc=org
 objectclass: groupOfNames
 objectclass: top
 cn: big
-description: 60 user members and one nested group, so the walk's finding path is covered at scale too
+description: 60 members, no nesting
 member: cn=bulk00,ou=users,dc=example,dc=org
 member: cn=bulk01,ou=users,dc=example,dc=org
 member: cn=bulk02,ou=users,dc=example,dc=org
@@ -172,7 +170,6 @@ member: cn=bulk56,ou=users,dc=example,dc=org
 member: cn=bulk57,ou=users,dc=example,dc=org
 member: cn=bulk58,ou=users,dc=example,dc=org
 member: cn=bulk59,ou=users,dc=example,dc=org
-member: cn=bigsub,ou=groups,dc=example,dc=org
 
 dn: cn=bulk00,ou=users,dc=example,dc=org
 objectclass: inetOrgPerson
@@ -593,11 +590,3 @@ objectclass: top
 cn: bulk59
 sn: Bulk59
 uid: bulk59
-
-# A nested group, held by cn=big above: the large group's inheritance case.
-dn: cn=bigsub,ou=groups,dc=example,dc=org
-objectclass: groupOfNames
-objectclass: top
-cn: bigsub
-member: cn=carol,ou=users,dc=example,dc=org
-

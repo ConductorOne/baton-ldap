@@ -19,7 +19,7 @@ func TestGroupGrantRevoke(t *testing.T) {
 	connector, err := createConnector(ctx, t, "simple.ldif")
 	require.NoError(t, err)
 
-	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.EffectiveGroupMemberAttribute())
 
 	groups, pt, _, err := gb.List(ctx, nil, &pagination.Token{})
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestGroupPosixGidNumber(t *testing.T) {
 	connector, err := createConnector(ctx, t, "primary_groups.ldif")
 	require.NoError(t, err)
 
-	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.EffectiveGroupMemberAttribute())
 
 	groups, pt, _, err := gb.List(ctx, nil, &pagination.Token{})
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestGroupOfURLsGrants(t *testing.T) {
 	connector, err := setupDyngroupTest(ctx, t)
 	require.NoError(t, err)
 
-	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.EffectiveGroupMemberAttribute())
 
 	groups, _, _, err := gb.List(ctx, nil, &pagination.Token{})
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestGroupOfURLsGrantRevokeError(t *testing.T) {
 	connector, err := setupDyngroupTest(ctx, t)
 	require.NoError(t, err)
 
-	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN, connector.config.EffectiveGroupMemberAttribute())
 
 	groups, _, _, err := gb.List(ctx, nil, &pagination.Token{})
 	require.NoError(t, err)

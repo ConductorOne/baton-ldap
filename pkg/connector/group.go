@@ -62,13 +62,6 @@ type groupResourceType struct {
 	userSearchDN  *ldap3.DN
 	client        *ldap.Client
 
-	// baseDN is the widest subtree the connector was configured for. The
-	// inherited-membership walk searches from it rather than from groupSearchDN: a
-	// nested group can live outside the group search scope and still contribute a
-	// membership through expansion, because the read path resolves a member value
-	// by its own DN.
-	baseDN *ldap3.DN
-
 	// groupMemberAttribute pins the membership attribute a grant is written to,
 	// or is empty when the attribute is learned per entry. See
 	// group_membership.go.
@@ -642,11 +635,10 @@ func parseMemberURL(rawURL string) (string, int, string, error) {
 }
 
 func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
-	userSearchDN *ldap3.DN, baseDN *ldap3.DN, groupMemberAttribute string) *groupResourceType {
+	userSearchDN *ldap3.DN, groupMemberAttribute string) *groupResourceType {
 	return &groupResourceType{
 		groupSearchDN:        groupSearchDN,
 		userSearchDN:         userSearchDN,
-		baseDN:               baseDN,
 		resourceType:         resourceTypeGroup,
 		client:               client,
 		groupMemberAttribute: groupMemberAttribute,

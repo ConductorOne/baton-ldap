@@ -37,7 +37,7 @@ func groupMembershipFixture(ctx context.Context, t *testing.T) (*groupResourceTy
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+		connector.config.EffectiveGroupMemberAttribute())
 
 	return gb, connector
 }
@@ -204,41 +204,42 @@ func TestGroupMembershipIdempotency(t *testing.T) {
 	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
 }
 
-// TestNestedGroupRevokeReportsInherited covers the inherited-membership guard end
-// to end: outer holds inner, inner holds carol, so the read path reports carol as
-// a member of outer, and no write to outer's own attributes can remove that. The
-// revoke must say so instead of reporting success.
-func TestNestedGroupRevokeReportsInherited(t *testing.T) {
+// TestNestedGroupMembershipIsOutOfScope pins the scope decision: a principal who is
+// a member of a group only through a nested group is NOT revoked by a revoke on the
+// parent. The connector answers already-revoked, changes nothing in the directory,
+// and the read path keeps reporting the membership (through expansion) until the
+// membership of the source group is revoked instead.
+//
+// It is pinned because it is a decision, not an accident: without this test the next
+// reader would see a revoke that reports success while the membership survives, and
+// would have no way to tell it apart from the defect this change set removed.
+func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 	ctx := t.Context()
 	gb, connector := groupMembershipFixture(ctx, t)
 
 	group := groupResourceFor(ctx, t, gb, fixtureOuterDN)
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
 
-	_, err := gb.Revoke(ctx, membershipGrant(fixtureCarolDN, entitlement))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "inherited")
-	require.ErrorContains(t, err, fixtureInnerDN)
+	before := groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember)
+	require.Contains(t, before, fixtureInnerDN)
 
-	// A direct grant for the same principal is still a direct write: an inherited
-	// membership must not make the grant think the work is already done.
-	annos, err := gb.Grant(ctx, userPrincipal(fixtureCarolDN), entitlement)
+	annos, err := gb.Revoke(ctx, membershipGrant(fixtureCarolDN, entitlement))
+	require.NoError(t, err, "a membership this connector does not hold is not an error to revoke")
+	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+
+	require.Equal(t, before, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember),
+		"the directory must not be touched")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN,
+		"the read path still reports the membership through expansion; revoking it means revoking it at the source group")
+
+	// The source group's own membership is a direct value, and revoking it there is
+	// the operation that works.
+	sourceGroup := groupResourceFor(ctx, t, gb, fixtureInnerDN)
+	sourceEntitlement := membershipEntitlementFor(ctx, t, gb, sourceGroup)
+	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, sourceEntitlement))
 	require.NoError(t, err)
-	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyExists{}))
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
-
-	// The revoke of that direct membership removes the value it wrote, but it
-	// cannot finish the job: carol is still a member of outer through inner, so the
-	// answer names the remaining source instead of reporting a success the next
-	// sync would contradict.
-	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, entitlement))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "inherited")
-	require.ErrorContains(t, err, fixtureInnerDN)
-	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember), fixtureCarolDN,
-		"the direct value this call wrote must be gone")
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureInnerDN,
-		"outer still holds the nested group, which is what makes carol a member of it again after expansion")
+	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureInnerDN, attrGroupMember), fixtureCarolDN)
+	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
 }
 
 // TestPrimaryGroupRevokeReportsPrimaryGroup covers the other guard: the
@@ -252,7 +253,7 @@ func TestPrimaryGroupRevokeReportsPrimaryGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+		connector.config.EffectiveGroupMemberAttribute())
 
 	group := groupResourceFor(ctx, t, gb, "cn=staff,ou=groups,dc=example,dc=org")
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
@@ -305,7 +306,7 @@ func TestRfc2307bisCoexistGrantFollowsContent(t *testing.T) {
 	}
 
 	gb := groupBuilder(connector.client, connector.config.GroupSearchDN, connector.config.UserSearchDN,
-		connector.config.BaseDN, connector.config.EffectiveGroupMemberAttribute())
+		connector.config.EffectiveGroupMemberAttribute())
 
 	group := groupResourceFor(ctx, t, gb, coexistDN)
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
@@ -390,53 +391,42 @@ func TestMemberUIDCollisionGrantWritesTheResolvedName(t *testing.T) {
 	require.Contains(t, principals, daveDN, "the read path must now report dave too")
 }
 
-// TestLargeGroupRevokeIsNotBlockedByTheInheritanceGuard covers the group size that
-// broke the inheritance guard: sixty members, one of which is itself a group. The
-// guard used to read one entry per member looking for the group-valued ones, and its
-// cap reported a cut-short search for any group this size, so a revoke removed the
-// value and then returned a non-retryable "stopped early" error -- and a retry
-// failed the same way, leaving the task unable to complete. An absent member failed
-// too, instead of answering already-revoked.
-//
-// The nested member is what lets the same fixture cover the walk *finding* an
-// inherited source at this size. What this test cannot show is *how many searches*
-// the guard made -- it counts members, not searches -- so a return to the
-// per-member walk would show up here only if it also broke one of these outcomes.
-func TestLargeGroupRevokeIsNotBlockedByTheInheritanceGuard(t *testing.T) {
+// TestLargeGroupRevoke covers the direct path on a group that is large enough to have
+// broken the inheritance walk this change set used to run after every delete: sixty
+// user members, no nesting. A revoke succeeds and really removes the value, an absent
+// principal answers already-revoked, and a grant lands and is confirmed. It is cheap
+// insurance that the direct path does not acquire a size-dependent failure again.
+func TestLargeGroupRevoke(t *testing.T) {
 	ctx := t.Context()
 	gb, connector := groupMembershipFixture(ctx, t)
 
 	const (
-		bigGroupDN    = "cn=big,ou=groups,dc=example,dc=org"
-		bigSubgroupDN = "cn=bigsub,ou=groups,dc=example,dc=org"
-		memberDN      = "cn=bulk00,ou=users,dc=example,dc=org"
-		absentDN      = "cn=alice,ou=users,dc=example,dc=org"
+		bigGroupDN = "cn=big,ou=groups,dc=example,dc=org"
+		memberDN   = "cn=bulk00,ou=users,dc=example,dc=org"
+		absentDN   = "cn=alice,ou=users,dc=example,dc=org"
 	)
 
 	group := groupResourceFor(ctx, t, gb, bigGroupDN)
 	entitlement := membershipEntitlementFor(ctx, t, gb, group)
 
-	// Sixty user members and the nested group.
-	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 61)
-
-	// The revocation of a real member succeeds, and really removes it.
-	annos, err := gb.Revoke(ctx, membershipGrant(memberDN, entitlement))
-	require.NoError(t, err, "a group this size is an ordinary group; the size must not fail the revoke")
-	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyRevoked{}))
-	require.NotContains(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), memberDN)
 	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 60)
 
-	// And the same call for a principal who is not a member answers already-revoked
-	// rather than a size-dependent error.
+	// A real member goes, and the count comes down by one.
+	annos, err := gb.Revoke(ctx, membershipGrant(memberDN, entitlement))
+	require.NoError(t, err, "a group this size is an ordinary group")
+	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyRevoked{}))
+	require.NotContains(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), memberDN)
+	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 59)
+
+	// An absent principal answers already-revoked rather than a size-dependent error.
 	annos, err = gb.Revoke(ctx, membershipGrant(absentDN, entitlement))
 	require.NoError(t, err)
 	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 
-	// The walk still finds an inherited source on a group this size: carol is held
-	// by the nested group, which the large group holds.
-	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, entitlement))
-	require.Error(t, err, "carol is a member of big through bigsub, so the revoke cannot claim success")
-	require.ErrorContains(t, err, "inherited")
-	require.ErrorContains(t, err, bigSubgroupDN)
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
+	// And a grant into it still lands and is confirmed.
+	annos, err = gb.Grant(ctx, userPrincipal(memberDN), entitlement)
+	require.NoError(t, err)
+	require.False(t, annos != nil && annos.Contains(&v2.GrantAlreadyExists{}))
+	require.Contains(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), memberDN)
+	require.Len(t, groupEntryValues(ctx, t, connector, bigGroupDN, attrGroupMember), 60)
 }
