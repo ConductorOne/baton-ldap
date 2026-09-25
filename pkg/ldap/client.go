@@ -29,6 +29,17 @@ const (
 	clientPoolSize     = 5
 	maxConnectAttempts = clientPoolSize + 10
 	defaultPageSize    = 100
+
+	// confirmReadAttempts bounds the post-modify read in
+	// LdapModifyStrictAndConfirm. A change can be invisible for a moment even on
+	// the connection that accepted it, and a short bounded retry covers that
+	// without turning a genuine failure into a long wait. The caller decides what
+	// an unconfirmed write means, and the SDK's own retry covers the rest.
+	confirmReadAttempts = 3
+	// confirmReadRetryDelay is the pause between those attempts. It is short: the
+	// connection is held for the whole loop, and the common case is that the first
+	// read shows the change.
+	confirmReadRetryDelay = 100 * time.Millisecond
 )
 
 type Client struct {
@@ -117,6 +128,17 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 				cp.Release()
 				return nil
 			}
+			if isExpectedStrictResult(err) {
+				// Debug, and not Error: the callers that use getConnection with
+				// isModify=false on purpose -- the membership write path -- read these
+				// codes as their normal answers (a schema refusal to try the next
+				// candidate, or a value that is already there). An Error line, and the
+				// error span it carries, would report an expected outcome as a fault on
+				// every candidate advance and every idempotent grant.
+				l.Debug("baton-ldap: client returned an expected result", zap.Error(err))
+				cp.Release()
+				return err
+			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
 			cp.Release()
 			return err
@@ -126,6 +148,21 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 		break
 	}
 	return err
+}
+
+// isExpectedStrictResult reports whether err is one of the result codes the
+// connector's own write path treats as an answer rather than a fault: the schema
+// refusals it advances past, the "already there" code it reports as idempotent
+// success, and the codes getConnection's idempotent-error list swallows for
+// isModify callers.
+func isExpectedStrictResult(err error) bool {
+	return ldap.IsErrorAnyOf(err,
+		ldap.LDAPResultObjectClassViolation,
+		ldap.LDAPResultUndefinedAttributeType,
+		ldap.LDAPResultAttributeOrValueExists,
+		ldap.LDAPResultEntryAlreadyExists,
+		ldap.LDAPResultNoSuchAttribute,
+	)
 }
 
 func parsePageToken(pageToken string) (string, []byte, error) {
@@ -418,6 +455,134 @@ func (c *Client) LdapModifyStrict(ctx context.Context, modifyRequest *ldap.Modif
 	}
 
 	return nil
+}
+
+// LdapModifyStrictAndConfirm runs modifyRequest on one pooled connection and then
+// reads the entry it modified, on that same connection, asking confirm after each
+// read whether the change is visible.
+//
+// Both halves on one connection is the point: with a pooled client the write and
+// the confirming read can otherwise land on different backends (a read replica, a
+// load-balanced node), and a confirmation taken from a server that never saw the
+// write is not a confirmation of anything.
+//
+// The modify's result is never swallowed: getConnection is called with
+// isModify=false, exactly as LdapModifyStrict does, so a schema rejection comes
+// back as its own result code. The read is retried a bounded number of times with
+// a short delay, because the change may not be visible immediately even on the
+// connection that accepted it.
+//
+// confirmed reports whether confirm accepted a read; err is either the modify's
+// own error or the error from the last read that failed. A modify the server
+// accepted whose change no read confirmed returns (false, nil): that is a
+// distinct outcome from a rejected write, and the caller decides what it means.
+func (c *Client) LdapModifyStrictAndConfirm(
+	ctx context.Context,
+	modifyRequest *ldap.ModifyRequest,
+	attrNames []string,
+	confirm func(*ldap.Entry) (bool, error),
+) (bool, error) {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("modifying ldap entry (strict, then confirm)", zap.String("DN", modifyRequest.DN))
+
+	var confirmed bool
+	var confirmationErr error
+
+	err := c.getConnection(ctx, false, func(client *ldapConn) error {
+		if err := client.conn.Modify(modifyRequest); err != nil {
+			return err
+		}
+		if confirm == nil {
+			confirmed = true
+			return nil
+		}
+
+		// Everything below happens after the server accepted the modify, so its
+		// errors are recorded rather than returned: getConnection retries a
+		// network error by running the callback again, which would issue the
+		// modify a second time. Retrying the write is the caller's decision (the
+		// SDK retries an Unavailable error), and a second unconditional Add is not
+		// a safe thing to do on its behalf.
+		for attempt := 1; attempt <= confirmReadAttempts; attempt++ {
+			if attempt > 1 {
+				// A context-aware wait: the connection is held for the whole loop,
+				// so a cancelled call must give it back now rather than after the
+				// delay.
+				timer := time.NewTimer(confirmReadRetryDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					confirmationErr = ctx.Err()
+					return nil
+				case <-timer.C:
+				}
+			}
+			entry, err := searchOnConnection(client, modifyRequest.DN, attrNames)
+			if err != nil {
+				confirmationErr = err
+				continue
+			}
+			ok, err := confirm(entry)
+			if err != nil {
+				confirmationErr = err
+				continue
+			}
+			confirmationErr = nil
+			if ok {
+				confirmed = true
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		// Debug, not Error: the caller logs the outcome, and getConnection has
+		// already logged the raw error.
+		l.Debug("baton-ldap: client failed to modify record (strict, then confirm)", zap.Error(err))
+		return false, err
+	}
+	if !confirmed && confirmationErr != nil {
+		// The write was accepted but the read that confirms it failed. That is
+		// retryable, not final: the SDK's retryer only retries Unavailable and
+		// DeadlineExceeded, and the alternative is a task that fails while the
+		// write it made may well be in place. The message keeps the read's own
+		// error, which is what a support engineer needs to see.
+		return false, status.Errorf(codes.Unavailable,
+			"baton-ldap: the write to %s was accepted but could not be confirmed: %v", modifyRequest.DN, confirmationErr)
+	}
+
+	return confirmed, nil
+}
+
+// searchOnConnection performs a base-scoped search for one entry on a connection
+// the caller already holds. It is the read half of LdapModifyStrictAndConfirm.
+//
+// The connector-wide filter is deliberately not applied: the entry was fetched
+// through it before the write, and the post-state must be readable even when the
+// filter would now exclude the entry -- a filter that hides the write would
+// otherwise look exactly like a write that did not happen.
+func searchOnConnection(client *ldapConn, dn string, attrNames []string) (*ldap.Entry, error) {
+	if len(attrNames) == 0 {
+		attrNames = []string{"*"}
+	}
+
+	resp, err := client.conn.Search(&ldap.SearchRequest{
+		BaseDN:       dn,
+		Scope:        ldap.ScopeBaseObject,
+		DerefAliases: ldap.DerefAlways,
+		Filter:       "(objectClass=*)",
+		Attributes:   attrNames,
+		SizeLimit:    1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Entries) == 0 {
+		return nil, status.Errorf(codes.NotFound, "baton-ldap: no such object")
+	}
+
+	return resp.Entries[0], nil
 }
 
 func (c *Client) LdapDelete(ctx context.Context, deleteRequest *ldap.DelRequest) error {

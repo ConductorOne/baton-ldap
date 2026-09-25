@@ -61,6 +61,17 @@ jobs:
           baton-entitlement: 'group:cn=testgroup00000,dc=example,dc=org:member'
           baton-principal: 'cn=testuser00099@example.com,dc=example,dc=org'
           baton-principal-type: user
+      # The same grant/revoke against a groupOfNames group, whose membership is in
+      # `member`. A write to uniqueMember is refused by the class and a delete from
+      # it removes nothing, so this step is the CI-side guard against a revoke that
+      # reports success while the member stays.
+      - name: Grant/revoke (groupOfNames)
+        uses: ConductorOne/github-workflows/actions/sync-test@v2
+        with:
+          connector: ./baton-ldap
+          baton-entitlement: 'group:cn=groupofnames00000,dc=example,dc=org:member'
+          baton-principal: 'cn=testuser00099@example.com,dc=example,dc=org'
+          baton-principal-type: user
       - name: Create account
         env:
           ACCOUNT_DISPLAYNAME: 'Example User'

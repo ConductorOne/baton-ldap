@@ -2,7 +2,6 @@ package connector
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -53,7 +52,6 @@ const (
 	attrGroupMemberPosix  = "memberUid"
 	attrGroupMemberURL    = "memberURL"
 	attrGroupDescription  = "description"
-	attrGroupObjectGUID   = "objectGUID"
 
 	groupMemberEntitlement = "member"
 )
@@ -63,6 +61,11 @@ type groupResourceType struct {
 	groupSearchDN *ldap3.DN
 	userSearchDN  *ldap3.DN
 	client        *ldap.Client
+
+	// groupMemberAttribute pins the membership attribute a grant is written to,
+	// or is empty when the attribute is learned per entry. See
+	// group_membership.go.
+	groupMemberAttribute string
 
 	uid2dnCache map[string]string
 	uid2dnMtx   sync.Mutex
@@ -413,6 +416,10 @@ func uniqueGrants(grants []*v2.Grant) []*v2.Grant {
 }
 
 // findMember: note this function can return an empty string if the member is not found.
+//
+// It is the read path's resolver, and it caches across calls: a sync resolves the
+// same login name many times, and its answers cannot change while the sync runs.
+// The write path must not use this cache (see lookupMember).
 func (g *groupResourceType) findMember(ctx context.Context, memberId string) (string, error) {
 	g.uid2dnMtx.Lock()
 	if dn, ok := g.uid2dnCache[memberId]; ok {
@@ -421,26 +428,47 @@ func (g *groupResourceType) findMember(ctx context.Context, memberId string) (st
 	}
 	g.uid2dnMtx.Unlock()
 
-	filter := fmt.Sprintf(groupMemberUIDFilter, ldap3.EscapeFilter(memberId))
-	dn, err := g.findMemberByFilter(ctx, memberId, filter)
-	if err != nil {
-		return "", err
-	}
-	if dn != "" {
-		return dn, nil
+	dn, err := g.lookupMember(ctx, memberId)
+	if err != nil || dn == "" {
+		return dn, err
 	}
 
-	filter = fmt.Sprintf(groupMemberCommonNameFilter, ldap3.EscapeFilter(memberId))
-	dn, err = g.findMemberByFilter(ctx, memberId, filter)
-	if err != nil {
-		return "", err
-	}
-	if dn != "" {
-		return dn, nil
-	}
-	return "", nil
+	g.uid2dnMtx.Lock()
+	g.uid2dnCache[memberId] = dn
+	g.uid2dnMtx.Unlock()
+
+	return dn, nil
 }
 
+// lookupMember resolves a stored login name to a user DN -- uid first, then cn,
+// exactly as the read path resolves one -- without consulting or filling the read
+// path's cache.
+//
+// The write path uses this one. A connector in service mode runs for weeks, so a
+// name that was re-pointed at a different entry after the first resolution would
+// otherwise decide a write (which attribute to write, and whether the principal is
+// already a member) from an answer that is no longer true.
+func (g *groupResourceType) lookupMember(ctx context.Context, memberId string) (string, error) {
+	dn, err := g.findMemberByFilter(ctx, memberId, fmt.Sprintf(groupMemberUIDFilter, ldap3.EscapeFilter(memberId)))
+	if err != nil || dn != "" {
+		return dn, err
+	}
+
+	return g.findMemberByFilter(ctx, memberId, fmt.Sprintf(groupMemberCommonNameFilter, ldap3.EscapeFilter(memberId)))
+}
+
+// findMemberByFilter runs one of the two login-name searches and returns the
+// canonical DN of the single entry it matched, an empty string when nothing
+// matched, and an error when more than one entry did (a directory whose uid or cn
+// is not unique cannot have its login-name memberships resolved).
+//
+// It asks for one entry, so a name that matches several entries on the first
+// search resolves to whichever one the server returns first rather than to an
+// ambiguity being reported. That only matters when the uid does not resolve and the
+// cn does: the second search then has to face the same name matching more than one
+// user, and the read path and the write path both accept its first match. Kept as
+// it is -- the read path has always resolved this way, and changing it would change
+// which memberships an existing deployment sees.
 func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId string, filter string) (string, error) {
 	l := ctxzap.Extract(ctx)
 
@@ -461,7 +489,11 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 	}
 
 	if len(memberEntry) == 0 {
-		l.Error("ldap-connector: expanding group: failed to find user", zap.String("member_id", memberId), zap.String("search_filter", filter))
+		// Debug, not Error: no match is the expected outcome of one of the two
+		// searches (a memberUid stored as the cn misses the uid filter first, and
+		// the write path asks both for every name it resolves). An Error here would
+		// appear on every provisioning call and on every such membership in a sync.
+		l.Debug("ldap-connector: expanding group: no user matched", zap.String("member_id", memberId), zap.String("search_filter", filter))
 		return "", nil
 	}
 
@@ -482,11 +514,7 @@ func (g *groupResourceType) findMemberByFilter(ctx context.Context, memberId str
 		return "", err
 	}
 
-	memberDN := memDN.String()
-	g.uid2dnMtx.Lock()
-	g.uid2dnCache[memberId] = memberDN
-	g.uid2dnMtx.Unlock()
-	return memberDN, nil
+	return memDN.String(), nil
 }
 
 func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap3.Entry, error) {
@@ -501,112 +529,6 @@ func (g *groupResourceType) getGroup(ctx context.Context, groupDN string) (*ldap
 		groupFilter,
 		nil,
 	)
-}
-
-func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, fmt.Errorf("baton-ldap: only users can have group membership granted")
-	}
-
-	groupDN := entitlement.Resource.Id.Resource
-
-	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
-
-	group, err := g.getGroup(ctx, groupDN)
-	if err != nil {
-		return nil, err
-	}
-
-	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
-	principalDNArr := []string{principal.Id.Resource}
-
-	switch {
-	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfURLs"):
-		return nil, fmt.Errorf("baton-ldap: cannot grant membership in dynamic groupOfURLs group %q directly", groupDN)
-
-	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
-		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
-		if err != nil {
-			return nil, err
-		}
-		username := []string{dn.RDNs[0].Attributes[0].Value}
-		modifyRequest.Add(attrGroupMemberPosix, username)
-
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
-		modifyRequest.Add(attrGroupMember, principalDNArr)
-
-	default:
-		modifyRequest.Add(attrGroupUniqueMember, principalDNArr)
-	}
-
-	// grant group membership to the principal
-	err = g.client.LdapModify(
-		ctx,
-		modifyRequest,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("ldap-connector: failed to grant group membership to user: %w", err)
-	}
-
-	return nil, nil
-}
-
-func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	entitlement := grant.Entitlement
-	principal := grant.Principal
-
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, fmt.Errorf("baton-ldap: only users can have group membership revoked")
-	}
-
-	groupDN := entitlement.Resource.Id.Resource
-
-	modifyRequest := ldap3.NewModifyRequest(groupDN, nil)
-
-	group, err := g.getGroup(ctx, groupDN)
-	if err != nil {
-		return nil, err
-	}
-
-	groupObjectGUID := parseValue(group, []string{attrGroupObjectGUID})
-	principalDNArr := []string{principal.Id.Resource}
-
-	switch {
-	case slices.Contains(group.GetAttributeValues("objectClass"), "groupOfURLs"):
-		return nil, fmt.Errorf("baton-ldap: cannot revoke membership in dynamic groupOfURLs group %q directly", groupDN)
-
-	case slices.Contains(group.GetAttributeValues("objectClass"), "posixGroup"):
-		dn, err := ldap.CanonicalizeDN(principal.Id.Resource)
-		if err != nil {
-			return nil, err
-		}
-		username := []string{dn.RDNs[0].Attributes[0].Value}
-		modifyRequest.Delete(attrGroupMemberPosix, username)
-
-	case slices.Contains(group.GetAttributeValues("objectClass"), "ipausergroup") || groupObjectGUID != "":
-		modifyRequest.Delete(attrGroupMember, principalDNArr)
-
-	default:
-		modifyRequest.Delete(attrGroupUniqueMember, principalDNArr)
-	}
-
-	// revoke group membership from the principal
-	err = g.client.LdapModify(
-		ctx,
-		modifyRequest,
-	)
-
-	if err != nil {
-		var lerr *ldap3.Error
-		if errors.As(err, &lerr) {
-			if lerr.ResultCode == ldap3.LDAPResultNoSuchAttribute {
-				return nil, nil
-			}
-		}
-		return nil, fmt.Errorf("ldap-connector: failed to revoke group membership from user: %w", err)
-	}
-
-	return nil, nil
 }
 
 // grantsFromMemberURL expands the current memberURL page of a groupOfURLs entry into grants.
@@ -713,12 +635,13 @@ func parseMemberURL(rawURL string) (string, int, string, error) {
 }
 
 func groupBuilder(client *ldap.Client, groupSearchDN *ldap3.DN,
-	userSearchDN *ldap3.DN) *groupResourceType {
+	userSearchDN *ldap3.DN, groupMemberAttribute string) *groupResourceType {
 	return &groupResourceType{
-		groupSearchDN: groupSearchDN,
-		userSearchDN:  userSearchDN,
-		resourceType:  resourceTypeGroup,
-		client:        client,
-		uid2dnCache:   make(map[string]string),
+		groupSearchDN:        groupSearchDN,
+		userSearchDN:         userSearchDN,
+		resourceType:         resourceTypeGroup,
+		client:               client,
+		groupMemberAttribute: groupMemberAttribute,
+		uid2dnCache:          make(map[string]string),
 	}
 }

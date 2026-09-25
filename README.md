@@ -43,6 +43,7 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 | `--disable-user-attributes` | `BATON_DISABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as disabled, for example `--disable-user-attributes revoke=Y`. Unset by default. See [User enable/disable attributes](#user-enabledisable-attributes). |
 | `--enable-user-attributes` | `BATON_ENABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as enabled, for example `--enable-user-attributes revoke=N`. Unset by default. When both directions are configured they must name the same attributes. |
 | `--provisioning` | `BATON_PROVISIONING` |  **optional** Enable Provisioning of Groups by `baton-ldap`. `true` or `false`.  Defaults to `false` |
+| `--group-member-attribute` | `BATON_GROUP_MEMBER_ATTRIBUTE` |  **optional** Which LDAP attribute to write group membership to: `auto` (default), `member`, `uniqueMember` or `memberUid`. See [Group membership attribute](#group-membership-attribute). |
 
 Use `baton-ldap --help` to see all configuration flags and environment variables.
 
@@ -274,6 +275,100 @@ written, the action is idempotent, an unwritable configured attribute fails the 
 call as well as every retry, the write is verified against the entry's actual attribute values, and
 registration is conditional on `--disable-user-attributes` being set.
 
+# Group membership provisioning
+
+
+## Group membership attribute
+
+A group's membership can live in `member` (a DN), `uniqueMember` (a DN) or `memberUid` (a login
+name). Which one it is cannot be decided from the entry's object classes: `posixGroup` is STRUCTURAL
+under RFC 2307 (OpenLDAP's `nis.schema`, so `{posixGroup, groupOfNames}` is rejected there) but
+AUXILIARY under rfc2307bis (which is what 389 DS ships by default since 1.4 and what FreeIPA uses),
+and a client such as SSSD picks the attribute it reads with its own `ldap_schema` setting regardless
+of what the server has loaded.
+
+So the connector observes the group entry and lets the server be the authority:
+
+1. **Read.** An entry carrying `groupOfURLs` is dynamic (its members come from `memberURL`) and is
+   never written. Otherwise the entry's own values are examined: whichever membership attributes
+   already hold values are the ones this directory uses, and all of them are maintained when the
+   entry has diverged. Only when the entry holds no membership at all do the object classes decide,
+   as an ordered guess: `groupOfUniqueNames` alone tries `uniqueMember` first, `posixGroup` without a
+   DN group class tries `memberUid` first, everything else tries `member` first.
+2. **Write.** One attribute per request, because an LDAP modify naming two attributes is rolled back
+   as a whole when either value already exists. A rejected attribute (result 65 objectClassViolation
+   or 17 undefinedAttributeType) is the entry's schema refusing it, and the next candidate is tried;
+   "the value is already there" (20) is reported as `GrantAlreadyExists`, not as an error.
+3. **Verify.** After a write, the entry is re-read **on the connection that accepted it** and the
+   connector asks the same question sync asks -- would the read path report this principal as a
+   member? A write the server accepted but the re-read cannot confirm is reported as a retryable
+   error and is *not* followed by a write to another attribute, which would leave the principal in
+   two places.
+
+A revoke is different, deliberately. It deletes the **exact stored values** that hold the principal,
+from **every** attribute that holds them, in one atomic request -- never from a guess, and never from
+an attribute the operator pinned. It acts on the group's own attributes and on nothing else: a
+membership this connector does not hold there is not its to revoke (see the nested-group limit below).
+
+One membership the connector *does* report, and that no write here can remove, is checked before the
+revoke answers success: the user's primary group, which the connector mints from the user entry's own
+`gidNumber`. That check runs whether or not this call found a direct membership to delete, because a
+principal who is a direct member *and* a primary-group member keeps the group membership after the
+direct value is removed, and the next sync would report the grant again. When it applies, the revoke
+names that and says what to change instead; otherwise it answers a plain success if it removed a direct
+membership and `GrantAlreadyRevoked` if there was none.
+
+`memberUid` values are written from the names the directory actually resolves to the principal, and
+only from those. `memberUid` holds a login name, and a name can be another user's: with `uid=dave` on
+one user and `cn=dave` on another, the string `dave` resolves to the first user, so writing it for the
+second would either fail as an existing value or store a membership sync cannot see. Names are
+resolved through the same uid-then-cn lookup the read path uses, freshly on every call, so a long-running
+connector does not act on a stale answer.
+
+Known limits:
+
+- A directory with schema checking **off** never rejects anything, so step 2 learns nothing and the
+  first candidate is used. OpenLDAP cannot disable schema checking (since 2.4 the directive is gone),
+  so this only affects servers that can, such as 389 DS (`nsslapd-schemacheck`). Use the pin below.
+- A hybrid entry carrying both `groupOfURLs` and a static group class keeps its existing behavior:
+  with the exact spelling `groupOfURLs`, the entry is treated as dynamic on both the read and the
+  write side; with a different spelling, as a static group. This change does not alter that.
+- A membership attribute outside these three (a site-specific attribute) is invisible to sync and to
+  provisioning alike.
+- Nested groups are read (as expandable grants), so a member value that resolves to a group becomes a
+  grant on this group that C1 expands. **Revoking membership here does not touch that expansion**: a
+  revoke removes membership from the group's own attributes, and a membership held only through a nested
+  group is not this connector's to revoke. A revoke for such a principal answers `GrantAlreadyRevoked`,
+  changes nothing in the directory, and the membership reappears on the next sync -- revoke it at the
+  source group instead (the one whose own attributes hold the member).
+- A `memberUid` value that is not the principal's `uid` is resolved by `cn`, and that search asks for a
+  single entry: if the name matches more than one user, whichever one the server returns first decides
+  the membership. (Only reachable when the `uid` does not resolve, and unchanged from how sync has
+  always resolved memberships.)
+- A group whose membership is **diverged** (the same logical membership stored in two attributes)
+  is written to both. If the server refuses one of them, the refusal is reported rather than skipped, and
+  the attributes written before it stay written: the refusal cannot be retried by a later grant either,
+  because the principal is then already a member in the attribute that was written and the grant answers
+  `GrantAlreadyExists` without touching the refused one. Completing such an entry is a manual write.
+- Removing the last member of a `groupOfNames` can be rejected by the server (`member` is a MUST
+  attribute of that class). That is unchanged.
+- Role membership still writes through `baton-ldap`'s idempotent-error-swallowing modify path, so a
+  role grant or revoke can still fail silently. Roles are not part of this behavior change.
+
+### `--group-member-attribute`
+
+| CLI Flag | Environment Variable | Explaination |
+|----------|----------|----------|
+| `--group-member-attribute` | `BATON_GROUP_MEMBER_ATTRIBUTE` | **optional** Which LDAP attribute to write group membership to: `auto` (default), `member`, `uniqueMember` or `memberUid`. Any other value is rejected at startup, so a typo cannot silently disable a pin. |
+
+`auto` is the behavior described above. Pin it when the directory cannot be learned from -- for
+example when schema checking is disabled, so nothing is ever rejected and the connector would use its
+first candidate for an entry that shows no membership. The pin governs **grants only**: a new
+membership is written to the pinned attribute and only that one, and a rejection of it is reported
+rather than falling through to an attribute the operator did not choose. **Revokes ignore the pin**,
+because deleting from an attribute that does not hold the value is exactly the failure the pin would
+otherwise reintroduce.
+
 # Developing baton-ldap
 
 ## How to test with Docker Compose
@@ -301,7 +396,7 @@ After successfully syncing data, use the baton CLI to list the resources and see
 
 - Users
 - Roles as `organizationalRole` in LDAP
-- Groups as `groupOfUniqueNames` in LDAP
+- Groups as `groupOfNames`, `groupOfUniqueNames`, `groupOfURLs`, `posixGroup` or `group` in LDAP
 
 `baton-ldap` will sync information only from under the base DN specified by the `--base-dn` flag in the configuration.
 

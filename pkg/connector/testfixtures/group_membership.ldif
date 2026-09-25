@@ -1,0 +1,592 @@
+version: 1
+
+dn: ou=groups,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: groups
+
+dn: ou=users,dc=example,dc=org
+objectclass: organizationalUnit
+objectclass: top
+ou: users
+
+dn: cn=alice,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: alice
+sn: Smith
+uid: alice
+
+dn: cn=bob,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bob
+sn: Jones
+uid: bob
+
+dn: cn=carol,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: carol
+sn: Brown
+uid: carol
+
+# A groupOfNames group, with membership in `member`. groupOfNames does not permit
+# uniqueMember, so a write to uniqueMember is rejected (65) and a delete from it
+# reports "attribute not present" (16) -- which is the silent failure this fixture
+# exists to catch.
+dn: cn=staff,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: staff
+description: Staff (groupOfNames)
+member: cn=alice,ou=users,dc=example,dc=org
+member: cn=bob,ou=users,dc=example,dc=org
+
+# A groupOfUniqueNames group: the class the connector's documentation used to
+# claim all groups used.
+dn: cn=uniquenames,ou=groups,dc=example,dc=org
+objectclass: groupOfUniqueNames
+objectclass: top
+cn: uniquenames
+owner: cn=alice,ou=users,dc=example,dc=org
+uniqueMember: cn=alice,ou=users,dc=example,dc=org
+
+# A structural posixGroup with no members at all: the entry shows nothing, so the
+# membership attribute comes from the object classes (memberUid first).
+dn: cn=posix,ou=groups,dc=example,dc=org
+objectclass: posixGroup
+objectclass: top
+cn: posix
+gidnumber: 4000
+
+# Nested groups: inner holds carol, outer holds inner. A revoke of carol from
+# outer must not report success -- outer holds no direct value for carol, and the
+# membership the read path reports comes from the expansion of inner.
+dn: cn=inner,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: inner
+description: Inner group (holds carol)
+member: cn=carol,ou=users,dc=example,dc=org
+
+dn: cn=outer,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: outer
+description: Outer group (holds inner)
+member: cn=inner,ou=groups,dc=example,dc=org
+
+# A uid/cn collision: "dave" is the uid of cn=robert and the cn of cn=dave.
+# findMember resolves a stored name by uid first, so a group storing
+# memberUid: dave holds robert's membership, not dave's. A revoke for cn=dave must
+# therefore not delete that value.
+dn: cn=robert,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: robert
+sn: Jones
+uid: dave
+
+dn: cn=dave,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: dave
+sn: Carter
+uid: robertd
+
+dn: cn=collision,ou=groups,dc=example,dc=org
+objectclass: posixGroup
+objectclass: top
+cn: collision
+gidnumber: 4020
+memberUid: dave
+
+# A group with 60 members: an ordinary group, and the size that used to make a
+# revoke fail while the inheritance guard walked this group's members one by one.
+# That walk is gone; this fixture keeps the size covered for the direct path.
+dn: cn=big,ou=groups,dc=example,dc=org
+objectclass: groupOfNames
+objectclass: top
+cn: big
+description: 60 members, no nesting
+member: cn=bulk00,ou=users,dc=example,dc=org
+member: cn=bulk01,ou=users,dc=example,dc=org
+member: cn=bulk02,ou=users,dc=example,dc=org
+member: cn=bulk03,ou=users,dc=example,dc=org
+member: cn=bulk04,ou=users,dc=example,dc=org
+member: cn=bulk05,ou=users,dc=example,dc=org
+member: cn=bulk06,ou=users,dc=example,dc=org
+member: cn=bulk07,ou=users,dc=example,dc=org
+member: cn=bulk08,ou=users,dc=example,dc=org
+member: cn=bulk09,ou=users,dc=example,dc=org
+member: cn=bulk10,ou=users,dc=example,dc=org
+member: cn=bulk11,ou=users,dc=example,dc=org
+member: cn=bulk12,ou=users,dc=example,dc=org
+member: cn=bulk13,ou=users,dc=example,dc=org
+member: cn=bulk14,ou=users,dc=example,dc=org
+member: cn=bulk15,ou=users,dc=example,dc=org
+member: cn=bulk16,ou=users,dc=example,dc=org
+member: cn=bulk17,ou=users,dc=example,dc=org
+member: cn=bulk18,ou=users,dc=example,dc=org
+member: cn=bulk19,ou=users,dc=example,dc=org
+member: cn=bulk20,ou=users,dc=example,dc=org
+member: cn=bulk21,ou=users,dc=example,dc=org
+member: cn=bulk22,ou=users,dc=example,dc=org
+member: cn=bulk23,ou=users,dc=example,dc=org
+member: cn=bulk24,ou=users,dc=example,dc=org
+member: cn=bulk25,ou=users,dc=example,dc=org
+member: cn=bulk26,ou=users,dc=example,dc=org
+member: cn=bulk27,ou=users,dc=example,dc=org
+member: cn=bulk28,ou=users,dc=example,dc=org
+member: cn=bulk29,ou=users,dc=example,dc=org
+member: cn=bulk30,ou=users,dc=example,dc=org
+member: cn=bulk31,ou=users,dc=example,dc=org
+member: cn=bulk32,ou=users,dc=example,dc=org
+member: cn=bulk33,ou=users,dc=example,dc=org
+member: cn=bulk34,ou=users,dc=example,dc=org
+member: cn=bulk35,ou=users,dc=example,dc=org
+member: cn=bulk36,ou=users,dc=example,dc=org
+member: cn=bulk37,ou=users,dc=example,dc=org
+member: cn=bulk38,ou=users,dc=example,dc=org
+member: cn=bulk39,ou=users,dc=example,dc=org
+member: cn=bulk40,ou=users,dc=example,dc=org
+member: cn=bulk41,ou=users,dc=example,dc=org
+member: cn=bulk42,ou=users,dc=example,dc=org
+member: cn=bulk43,ou=users,dc=example,dc=org
+member: cn=bulk44,ou=users,dc=example,dc=org
+member: cn=bulk45,ou=users,dc=example,dc=org
+member: cn=bulk46,ou=users,dc=example,dc=org
+member: cn=bulk47,ou=users,dc=example,dc=org
+member: cn=bulk48,ou=users,dc=example,dc=org
+member: cn=bulk49,ou=users,dc=example,dc=org
+member: cn=bulk50,ou=users,dc=example,dc=org
+member: cn=bulk51,ou=users,dc=example,dc=org
+member: cn=bulk52,ou=users,dc=example,dc=org
+member: cn=bulk53,ou=users,dc=example,dc=org
+member: cn=bulk54,ou=users,dc=example,dc=org
+member: cn=bulk55,ou=users,dc=example,dc=org
+member: cn=bulk56,ou=users,dc=example,dc=org
+member: cn=bulk57,ou=users,dc=example,dc=org
+member: cn=bulk58,ou=users,dc=example,dc=org
+member: cn=bulk59,ou=users,dc=example,dc=org
+
+dn: cn=bulk00,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk00
+sn: Bulk00
+uid: bulk00
+
+dn: cn=bulk01,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk01
+sn: Bulk01
+uid: bulk01
+
+dn: cn=bulk02,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk02
+sn: Bulk02
+uid: bulk02
+
+dn: cn=bulk03,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk03
+sn: Bulk03
+uid: bulk03
+
+dn: cn=bulk04,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk04
+sn: Bulk04
+uid: bulk04
+
+dn: cn=bulk05,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk05
+sn: Bulk05
+uid: bulk05
+
+dn: cn=bulk06,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk06
+sn: Bulk06
+uid: bulk06
+
+dn: cn=bulk07,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk07
+sn: Bulk07
+uid: bulk07
+
+dn: cn=bulk08,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk08
+sn: Bulk08
+uid: bulk08
+
+dn: cn=bulk09,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk09
+sn: Bulk09
+uid: bulk09
+
+dn: cn=bulk10,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk10
+sn: Bulk10
+uid: bulk10
+
+dn: cn=bulk11,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk11
+sn: Bulk11
+uid: bulk11
+
+dn: cn=bulk12,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk12
+sn: Bulk12
+uid: bulk12
+
+dn: cn=bulk13,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk13
+sn: Bulk13
+uid: bulk13
+
+dn: cn=bulk14,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk14
+sn: Bulk14
+uid: bulk14
+
+dn: cn=bulk15,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk15
+sn: Bulk15
+uid: bulk15
+
+dn: cn=bulk16,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk16
+sn: Bulk16
+uid: bulk16
+
+dn: cn=bulk17,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk17
+sn: Bulk17
+uid: bulk17
+
+dn: cn=bulk18,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk18
+sn: Bulk18
+uid: bulk18
+
+dn: cn=bulk19,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk19
+sn: Bulk19
+uid: bulk19
+
+dn: cn=bulk20,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk20
+sn: Bulk20
+uid: bulk20
+
+dn: cn=bulk21,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk21
+sn: Bulk21
+uid: bulk21
+
+dn: cn=bulk22,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk22
+sn: Bulk22
+uid: bulk22
+
+dn: cn=bulk23,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk23
+sn: Bulk23
+uid: bulk23
+
+dn: cn=bulk24,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk24
+sn: Bulk24
+uid: bulk24
+
+dn: cn=bulk25,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk25
+sn: Bulk25
+uid: bulk25
+
+dn: cn=bulk26,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk26
+sn: Bulk26
+uid: bulk26
+
+dn: cn=bulk27,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk27
+sn: Bulk27
+uid: bulk27
+
+dn: cn=bulk28,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk28
+sn: Bulk28
+uid: bulk28
+
+dn: cn=bulk29,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk29
+sn: Bulk29
+uid: bulk29
+
+dn: cn=bulk30,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk30
+sn: Bulk30
+uid: bulk30
+
+dn: cn=bulk31,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk31
+sn: Bulk31
+uid: bulk31
+
+dn: cn=bulk32,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk32
+sn: Bulk32
+uid: bulk32
+
+dn: cn=bulk33,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk33
+sn: Bulk33
+uid: bulk33
+
+dn: cn=bulk34,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk34
+sn: Bulk34
+uid: bulk34
+
+dn: cn=bulk35,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk35
+sn: Bulk35
+uid: bulk35
+
+dn: cn=bulk36,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk36
+sn: Bulk36
+uid: bulk36
+
+dn: cn=bulk37,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk37
+sn: Bulk37
+uid: bulk37
+
+dn: cn=bulk38,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk38
+sn: Bulk38
+uid: bulk38
+
+dn: cn=bulk39,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk39
+sn: Bulk39
+uid: bulk39
+
+dn: cn=bulk40,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk40
+sn: Bulk40
+uid: bulk40
+
+dn: cn=bulk41,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk41
+sn: Bulk41
+uid: bulk41
+
+dn: cn=bulk42,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk42
+sn: Bulk42
+uid: bulk42
+
+dn: cn=bulk43,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk43
+sn: Bulk43
+uid: bulk43
+
+dn: cn=bulk44,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk44
+sn: Bulk44
+uid: bulk44
+
+dn: cn=bulk45,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk45
+sn: Bulk45
+uid: bulk45
+
+dn: cn=bulk46,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk46
+sn: Bulk46
+uid: bulk46
+
+dn: cn=bulk47,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk47
+sn: Bulk47
+uid: bulk47
+
+dn: cn=bulk48,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk48
+sn: Bulk48
+uid: bulk48
+
+dn: cn=bulk49,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk49
+sn: Bulk49
+uid: bulk49
+
+dn: cn=bulk50,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk50
+sn: Bulk50
+uid: bulk50
+
+dn: cn=bulk51,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk51
+sn: Bulk51
+uid: bulk51
+
+dn: cn=bulk52,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk52
+sn: Bulk52
+uid: bulk52
+
+dn: cn=bulk53,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk53
+sn: Bulk53
+uid: bulk53
+
+dn: cn=bulk54,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk54
+sn: Bulk54
+uid: bulk54
+
+dn: cn=bulk55,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk55
+sn: Bulk55
+uid: bulk55
+
+dn: cn=bulk56,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk56
+sn: Bulk56
+uid: bulk56
+
+dn: cn=bulk57,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk57
+sn: Bulk57
+uid: bulk57
+
+dn: cn=bulk58,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk58
+sn: Bulk58
+uid: bulk58
+
+dn: cn=bulk59,ou=users,dc=example,dc=org
+objectclass: inetOrgPerson
+objectclass: top
+cn: bulk59
+sn: Bulk59
+uid: bulk59
