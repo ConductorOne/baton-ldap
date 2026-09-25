@@ -518,19 +518,16 @@ func attributeHoldsPrincipal(entry *ldap3.Entry, attr string, id principalIdenti
 	return false
 }
 
-// anyAttributeHoldsPrincipal reports whether the group holds the principal in any
-// of the membership attributes. It is the question the read path answers, and the
-// one the inherited-membership traversal asks of each nested group.
+// anyAttributeHoldsPrincipal reports whether the group holds the principal in any of
+// its own membership attributes, by the read path's rule for each value. It is the
+// revoke confirmation's question -- the principal is gone when no attribute holds it
+// -- and it is the read path's own question as well: would a sync report this
+// principal as a member of this group.
 func anyAttributeHoldsPrincipal(entry *ldap3.Entry, id principalIdentity) bool {
 	return slices.ContainsFunc(membershipAttrs, func(attr string) bool {
 		return attributeHoldsPrincipal(entry, attr, id)
 	})
 }
-
-// anyAttributeHoldsPrincipal (above) is the only form of this question the write path
-// asks now: the confirmation check asks whether the group holds the principal in any
-// of its own attributes. The narrower wrapper that asked it of a single named group
-// was used only by the inherited-membership walk, which is gone.
 
 // retryableMembershipError marks an outcome the connector could not establish as
 // retryable. Only codes.Unavailable and codes.DeadlineExceeded are retried by the
