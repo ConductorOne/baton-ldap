@@ -128,6 +128,17 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 				cp.Release()
 				return nil
 			}
+			if isExpectedStrictResult(err) {
+				// Debug, and not Error: the callers that use getConnection with
+				// isModify=false on purpose -- the membership write path -- read these
+				// codes as their normal answers (a schema refusal to try the next
+				// candidate, or a value that is already there). An Error line, and the
+				// error span it carries, would report an expected outcome as a fault on
+				// every candidate advance and every idempotent grant.
+				l.Debug("baton-ldap: client returned an expected result", zap.Error(err))
+				cp.Release()
+				return err
+			}
 			l.Error("baton-ldap: client failed to run function", zap.Error(err))
 			cp.Release()
 			return err
@@ -137,6 +148,21 @@ func (c *Client) getConnection(ctx context.Context, isModify bool, f func(client
 		break
 	}
 	return err
+}
+
+// isExpectedStrictResult reports whether err is one of the result codes the
+// connector's own write path treats as an answer rather than a fault: the schema
+// refusals it advances past, the "already there" code it reports as idempotent
+// success, and the codes getConnection's idempotent-error list swallows for
+// isModify callers.
+func isExpectedStrictResult(err error) bool {
+	return ldap.IsErrorAnyOf(err,
+		ldap.LDAPResultObjectClassViolation,
+		ldap.LDAPResultUndefinedAttributeType,
+		ldap.LDAPResultAttributeOrValueExists,
+		ldap.LDAPResultEntryAlreadyExists,
+		ldap.LDAPResultNoSuchAttribute,
+	)
 }
 
 func parsePageToken(pageToken string) (string, []byte, error) {

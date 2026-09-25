@@ -975,6 +975,14 @@ func holderFilter(groupDNS []string) string {
 // The returned name is the group that holds the principal directly (not an
 // intermediate), and truncated reports that a search filled its page or that the
 // depth cap was reached with ancestry left unexplored.
+//
+// The bounds apply to the principal's whole ancestry, not only to the chain that
+// leads to groupDN: the walk cannot know which ancestor is the one that matters
+// without exploring it, so a principal whose memberships nest deeper than the depth
+// cap, or reach more groups than one search page, anywhere in the directory answers
+// "could not establish" for every revoke of theirs. That is deliberate -- the
+// alternative is the per-member walk that made an ordinary group's revoke fail (see
+// the history of this function) -- and it is stated in the README.
 func (g *groupResourceType) inheritedViaTraversal(ctx context.Context, l *zap.Logger, groupDN string, id principalIdentity) (string, bool, error) {
 	groupKey := dnKey(groupDN)
 	if groupKey == "" {
