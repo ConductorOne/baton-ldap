@@ -527,21 +527,10 @@ func anyAttributeHoldsPrincipal(entry *ldap3.Entry, id principalIdentity) bool {
 	})
 }
 
-// groupHoldsPrincipal reports whether the read path would report id.dn as a direct
-// member of this group. It is the post-condition check: it asks "would a sync see
-// this membership?" rather than "did the server return success?".
-//
-// The resolution it needs -- which of the principal's names map back to it -- was
-// done once when the principal's identity was resolved, so this performs no I/O
-// and, in particular, no search that would take a second pooled connection while
-// the modify's connection is held.
-//
-// A plain DN string comparison is deliberately not the check: CanonicalizeDN
-// lowercases values only for the attribute types in caseInsensitiveAttrs, so the
-// read path is the authority here, not our string handling.
-func groupHoldsPrincipal(entry *ldap3.Entry, id principalIdentity) bool {
-	return anyAttributeHoldsPrincipal(entry, id)
-}
+// anyAttributeHoldsPrincipal (above) is the only form of this question the write path
+// asks now: the confirmation check asks whether the group holds the principal in any
+// of its own attributes. The narrower wrapper that asked it of a single named group
+// was used only by the inherited-membership walk, which is gone.
 
 // retryableMembershipError marks an outcome the connector could not establish as
 // retryable. Only codes.Unavailable and codes.DeadlineExceeded are retried by the
