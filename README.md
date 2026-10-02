@@ -145,7 +145,10 @@ with the same resource ID that sync gives it).
 - The RDN attribute is always `cn`.
 - The action is idempotent. When a group already exists at the DN, the action returns it with
   `created=false`. When the DN holds an entry that is not a group, the action fails with
-  `AlreadyExists`.
+  `AlreadyExists`. When `--group-member-attribute` is pinned to `member` or `uniqueMember`, an
+  existing group is returned only if it has the class that holds the pinned attribute
+  (`groupOfNames` or `groupOfUniqueNames`); otherwise the action fails with `FailedPrecondition`,
+  because every later grant to that group would fail.
 - The object class is a connector setting, not an argument. `--create-group-object-class` selects
   `groupOfUniqueNames` or `groupOfNames`. When it is unset, the class follows
   `--group-member-attribute`: `groupOfNames` for `member`, otherwise `groupOfUniqueNames`. A class

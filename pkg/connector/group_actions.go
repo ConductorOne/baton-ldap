@@ -77,6 +77,20 @@ func isGroupEntry(entry *ldap.Entry) bool {
 	return false
 }
 
+func canHoldPinnedMemberAttribute(entry *ldap.Entry, groupMemberAttribute, requiredObjectClass string) bool {
+	switch groupMemberAttribute {
+	case config.GroupMemberAttributeMember, config.GroupMemberAttributeUniqueMember:
+	default:
+		return true
+	}
+	for _, objectClass := range entry.GetEqualFoldAttributeValues(ldapAttrObjectClass) {
+		if strings.EqualFold(objectClass, requiredObjectClass) {
+			return true
+		}
+	}
+	return false
+}
+
 func createGroupActionSchema() *v2.BatonActionSchema {
 	return &v2.BatonActionSchema{
 		Name:        actionNameCreateGroup,
@@ -168,15 +182,14 @@ func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structp
 	}
 
 	created := true
+	var memberRequiredErr error
 	if err := l.client.LdapAddStrict(ctx, addReq); err != nil {
 		switch {
 		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultEntryAlreadyExists):
 			created = false
 		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultObjectClassViolation) && placeholder == nil:
-			log.Warn("create_group: schema requires a member", zap.String("dn", groupDN), zap.Error(err))
-			return nil, nil, status.Errorf(codes.InvalidArgument,
-				"ldap-connector: create_group: this directory's schema requires at least one member for %s; set create-group-placeholder-member: %v",
-				objectClass, err)
+			created = false
+			memberRequiredErr = err
 		default:
 			log.Warn("create_group: add failed", zap.String("dn", groupDN), zap.Error(err))
 			return nil, nil, status.Errorf(ldapResultCodeToGRPC(err), "ldap-connector: create_group: failed to add group %q: %v", groupDN, err)
@@ -185,11 +198,22 @@ func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structp
 
 	entry, err := l.client.LdapGetRaw(ctx, groupDN, ldapFilterAnyObject, createGroupReadBackAttrs)
 	if err != nil {
+		if memberRequiredErr != nil && lookupErrToGRPC(err) == codes.NotFound {
+			log.Warn("create_group: schema requires a member", zap.String("dn", groupDN), zap.Error(memberRequiredErr))
+			return nil, nil, status.Errorf(codes.InvalidArgument,
+				"ldap-connector: create_group: this directory's schema requires at least one member for %s; set create-group-placeholder-member: %v",
+				objectClass, memberRequiredErr)
+		}
 		log.Warn("create_group: read-back failed", zap.String("dn", groupDN), zap.Error(err))
 		return nil, nil, status.Errorf(lookupErrToGRPC(err), "ldap-connector: create_group: failed to read group %q: %v", groupDN, err)
 	}
 	if !isGroupEntry(entry) {
 		return nil, nil, status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry that is not a group already exists at %q", entry.DN)
+	}
+	if !created && !canHoldPinnedMemberAttribute(entry, l.config.GroupMemberAttribute, objectClass) {
+		return nil, nil, status.Errorf(codes.FailedPrecondition,
+			"ldap-connector: create_group: the group at %q is not a %s, so it cannot hold group-member-attribute %s",
+			entry.DN, objectClass, l.config.GroupMemberAttribute)
 	}
 
 	resource, err := groupResource(ctx, entry)
