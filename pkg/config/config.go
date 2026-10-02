@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -61,7 +62,26 @@ var (
 			"A pin governs where a new grant is written; a revoke always removes the membership from wherever it actually is, so a "+
 			"revoke can never report success while leaving the member."),
 		field.WithDefaultValue(GroupMemberAttributeAuto))
+
+	createGroupObjectClassField = field.StringField("create-group-object-class",
+		field.WithDisplayName("Create group object class"),
+		field.WithDescription("The structural object class the create_group action gives a new group: \"groupOfUniqueNames\" or \"groupOfNames\". "+
+			"Unset by default, which follows group-member-attribute: \"groupOfNames\" when it is pinned to \"member\", otherwise "+
+			"\"groupOfUniqueNames\". A class that cannot hold the pinned attribute is rejected at startup, and create_group is not "+
+			"offered when group-member-attribute is \"memberUid\"."))
+	createGroupPlaceholderMemberField = field.StringField("create-group-placeholder-member",
+		field.WithDisplayName("Create group placeholder member"),
+		field.WithDescription("Optional DN that the create_group action writes as the first member of a new group, for directories whose "+
+			"schema refuses a group with no member. Use a dedicated entry, for example 'cn=nobody,dc=example,dc=com'. Sync does not "+
+			"report this DN as a group member."))
 )
+
+const (
+	CreateGroupObjectClassGroupOfNames       = "groupOfNames"
+	CreateGroupObjectClassGroupOfUniqueNames = "groupOfUniqueNames"
+)
+
+var ErrCreateGroupUnsupported = errors.New("create_group is not supported when group-member-attribute is memberUid")
 
 // Group member attribute modes. The default learns the attribute per entry from
 // the group entry and the server's schema (see pkg/connector/group_membership.go);
@@ -106,6 +126,8 @@ var ConfigurationFields = []field.SchemaField{
 	disableUserAttributesField,
 	enableUserAttributesField,
 	groupMemberAttributeField,
+	createGroupObjectClassField,
+	createGroupPlaceholderMemberField,
 	filterField,
 }
 
@@ -225,6 +247,20 @@ func New(ctx context.Context, v *viper.Viper) (*Config, error) {
 	}
 	rv.GroupMemberAttribute = groupMemberAttribute
 
+	createGroupObjectClass, err := normalizeCreateGroupObjectClass(v, groupMemberAttribute)
+	if err != nil {
+		return nil, err
+	}
+	rv.CreateGroupObjectClass = createGroupObjectClass
+
+	if placeholderValue := strings.TrimSpace(v.GetString(createGroupPlaceholderMemberField.FieldName)); placeholderValue != "" {
+		placeholderDN, err := ldap.CanonicalizeDN(placeholderValue)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing %s: %w", createGroupPlaceholderMemberField.FieldName, err)
+		}
+		rv.CreateGroupPlaceholderMember = placeholderDN
+	}
+
 	l.Info("baton-ldap: user status attribute definition",
 		zap.Strings("managed_attributes", userStatusAttributes.ManagedAttributes()),
 		zap.Any("disable_user_attributes", userStatusAttributes.Disabled),
@@ -265,6 +301,68 @@ func normalizeGroupMemberAttribute(v *viper.Viper) (string, error) {
 			GroupMemberAttributeAuto, GroupMemberAttributeMember,
 			GroupMemberAttributeUniqueMember, GroupMemberAttributeMemberUID)
 	}
+}
+
+func normalizeCreateGroupObjectClass(v *viper.Viper, groupMemberAttribute string) (string, error) {
+	raw := strings.TrimSpace(v.GetString(createGroupObjectClassField.FieldName))
+	var objectClass string
+	switch {
+	case raw == "":
+	case strings.EqualFold(raw, CreateGroupObjectClassGroupOfNames):
+		objectClass = CreateGroupObjectClassGroupOfNames
+	case strings.EqualFold(raw, CreateGroupObjectClassGroupOfUniqueNames):
+		objectClass = CreateGroupObjectClassGroupOfUniqueNames
+	default:
+		return "", fmt.Errorf("%s: %q is not supported; expected %s or %s",
+			createGroupObjectClassField.FieldName, raw,
+			CreateGroupObjectClassGroupOfUniqueNames, CreateGroupObjectClassGroupOfNames)
+	}
+
+	if _, err := ResolveCreateGroupObjectClass(groupMemberAttribute, objectClass); err != nil && !errors.Is(err, ErrCreateGroupUnsupported) {
+		return "", err
+	}
+	return objectClass, nil
+}
+
+// ResolveCreateGroupObjectClass returns the class create_group writes. The
+// membership write path writes only a pinned attribute, so the class must be
+// the one that permits it. ErrCreateGroupUnsupported means the action must not
+// be offered.
+func ResolveCreateGroupObjectClass(groupMemberAttribute, configured string) (string, error) {
+	switch configured {
+	case "", CreateGroupObjectClassGroupOfNames, CreateGroupObjectClassGroupOfUniqueNames:
+	default:
+		return "", fmt.Errorf("%s: %q is not supported; expected %s or %s",
+			createGroupObjectClassField.FieldName, configured,
+			CreateGroupObjectClassGroupOfUniqueNames, CreateGroupObjectClassGroupOfNames)
+	}
+
+	var required string
+	switch groupMemberAttribute {
+	case "", GroupMemberAttributeAuto:
+		if configured == "" {
+			return CreateGroupObjectClassGroupOfUniqueNames, nil
+		}
+		return configured, nil
+	case GroupMemberAttributeMember:
+		required = CreateGroupObjectClassGroupOfNames
+	case GroupMemberAttributeUniqueMember:
+		required = CreateGroupObjectClassGroupOfUniqueNames
+	case GroupMemberAttributeMemberUID:
+		if configured != "" {
+			return "", fmt.Errorf("%s: %q cannot be used while %s is %s, because create_group is not offered then",
+				createGroupObjectClassField.FieldName, configured, groupMemberAttributeField.FieldName, GroupMemberAttributeMemberUID)
+		}
+		return "", ErrCreateGroupUnsupported
+	default:
+		return "", fmt.Errorf("%s: %q is not a group membership attribute", groupMemberAttributeField.FieldName, groupMemberAttribute)
+	}
+
+	if configured != "" && configured != required {
+		return "", fmt.Errorf("%s: %q cannot hold %s %q; use %s",
+			createGroupObjectClassField.FieldName, configured, groupMemberAttributeField.FieldName, groupMemberAttribute, required)
+	}
+	return required, nil
 }
 
 // UserStatusAttributes is the normalized definition of which LDAP attribute
@@ -610,6 +708,9 @@ type Config struct {
 	// written to. Empty (and GroupMemberAttributeAuto) means the attribute is
 	// learned per entry: see pkg/connector/group_membership.go.
 	GroupMemberAttribute string
+
+	CreateGroupObjectClass       string
+	CreateGroupPlaceholderMember *ldap3.DN
 
 	UserStatusAttributes UserStatusAttributes
 }

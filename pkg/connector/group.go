@@ -67,6 +67,8 @@ type groupResourceType struct {
 	// group_membership.go.
 	groupMemberAttribute string
 
+	placeholderMember *ldap3.DN
+
 	uid2dnCache map[string]string
 	uid2dnMtx   sync.Mutex
 }
@@ -309,6 +311,9 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	for memberId := range memberIDs.Iter() {
 		parsedDN, err := ldap.CanonicalizeDN(memberId)
 		if err == nil {
+			if g.isPlaceholderMember(parsedDN) {
+				continue
+			}
 			member, _, err := g.client.LdapSearch(
 				ctx,
 				ldap3.ScopeWholeSubtree,
@@ -380,6 +385,10 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	rv = uniqueGrants(rv)
 
 	return rv, "", nil, nil
+}
+
+func (g *groupResourceType) isPlaceholderMember(dn *ldap3.DN) bool {
+	return g.placeholderMember != nil && g.placeholderMember.EqualFold(dn)
 }
 
 func (g *groupResourceType) getGroupWithFallback(ctx context.Context, l *zap.Logger, groupDN *ldap3.DN, externalId *v2.ExternalId) (*ldap3.Entry, error) {

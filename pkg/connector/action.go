@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/conductorone/baton-ldap/pkg/config"
 	"github.com/conductorone/baton-ldap/pkg/ldap"
 	config_sdk "github.com/conductorone/baton-sdk/pb/c1/config/v1"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -136,6 +137,16 @@ func requireOptionalStructArg(args *structpb.Struct, key string) (*structpb.Stru
 func (l *LDAP) GlobalActions(ctx context.Context, registry actions.ActionRegistry) error {
 	if err := registry.Register(ctx, createOUActionSchema(), l.createOU); err != nil {
 		return fmt.Errorf("ldap-connector: failed to register create_ou action: %w", err)
+	}
+
+	_, err := config.ResolveCreateGroupObjectClass(l.config.GroupMemberAttribute, l.config.CreateGroupObjectClass)
+	switch {
+	case err == nil:
+		if err := registry.Register(ctx, createGroupActionSchema(), l.createGroup); err != nil {
+			return fmt.Errorf("ldap-connector: failed to register create_group action: %w", err)
+		}
+	case !errors.Is(err, config.ErrCreateGroupUnsupported):
+		return fmt.Errorf("ldap-connector: failed to register create_group action: %w", err)
 	}
 
 	// Registered per direction, so ConductorOne never offers a lifecycle action
