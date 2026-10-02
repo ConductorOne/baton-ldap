@@ -44,6 +44,8 @@ brew install conductorone/baton/baton conductorone/baton/baton-ldap
 | `--enable-user-attributes` | `BATON_ENABLE_USER_ATTRIBUTES` |  **optional** Map of LDAP attribute name to the value that marks an account as enabled, for example `--enable-user-attributes revoke=N`. Unset by default. When both directions are configured they must name the same attributes. |
 | `--provisioning` | `BATON_PROVISIONING` |  **optional** Enable Provisioning of Groups by `baton-ldap`. `true` or `false`.  Defaults to `false` |
 | `--group-member-attribute` | `BATON_GROUP_MEMBER_ATTRIBUTE` |  **optional** Which LDAP attribute to write group membership to: `auto` (default), `member`, `uniqueMember` or `memberUid`. See [Group membership attribute](#group-membership-attribute). |
+| `--create-group-object-class` | `BATON_CREATE_GROUP_OBJECT_CLASS` |  **optional** The object class `create_group` gives a new group: `groupOfUniqueNames` or `groupOfNames`. Unset by default, which follows `--group-member-attribute`. See [`create_group`](#create_group). |
+| `--create-group-placeholder-member` | `BATON_CREATE_GROUP_PLACEHOLDER_MEMBER` |  **optional** A DN that `create_group` writes as the first member of a new group, for directories that refuse a group with no member. Sync does not report it as a member. See [`create_group`](#create_group). |
 
 Use `baton-ldap --help` to see all configuration flags and environment variables.
 
@@ -121,6 +123,52 @@ Returns `ou_dn` (the created OU's DN) and `success`.
 - `base-dn` must be configured; the parent DN must be at or under it, or the action is rejected (fail-closed).
 - The action is idempotent: creating an OU that already exists succeeds.
 - The bind account must have permission to create entries at the target location.
+
+## `create_group`
+
+Creates an LDAP group under a parent container in the group search DN.
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The group name. Used as the `cn` attribute and the RDN (`cn=<name>`). |
+| `parent_dn` | no | The container DN to create the group under. Defaults to the configured `group-search-dn`. |
+| `description` | no | Sets the `description` attribute on the group. |
+
+Returns `success`, `created` (`true` when this call created the group, `false` when a group already
+existed at the DN), `group_dn` (the DN as the directory returns it) and `group` (the group resource,
+with the same resource ID that sync gives it).
+
+**Notes:**
+- The parent DN must be at or under `group-search-dn` (which defaults to `base-dn`), or the action is
+  rejected and nothing is written. A group outside `group-search-dn` would never appear in sync. To
+  create groups elsewhere, widen `group-search-dn`.
+- The RDN attribute is always `cn`.
+- The action is idempotent. When a group already exists at the DN, the action returns it with
+  `created=false`. When the DN holds an entry that is not a group, the action fails with
+  `AlreadyExists`. When `--group-member-attribute` is pinned to `member` or `uniqueMember`, an
+  existing group is returned only if it has the class that holds the pinned attribute
+  (`groupOfNames` or `groupOfUniqueNames`); otherwise the action fails with `FailedPrecondition`,
+  because every later grant to that group would fail.
+- The object class is a connector setting, not an argument. `--create-group-object-class` selects
+  `groupOfUniqueNames` or `groupOfNames`. When it is unset, the class follows
+  `--group-member-attribute`: `groupOfNames` for `member`, otherwise `groupOfUniqueNames`. A class
+  that cannot hold the pinned attribute is rejected at startup. When `--group-member-attribute` is
+  `memberUid`, `create_group` is not offered, and setting `--create-group-object-class` is rejected
+  at startup. `posixGroup` is not supported.
+- **Active Directory is not supported.** An AD security group needs `objectClass=group` and
+  attributes this action does not write.
+- The bind account must have permission to create entries at the target location.
+
+**Group membership provisioning.** `create_group` writes no members, because membership is managed
+through the normal grant path after the group exists: a grant writes the attribute that the group's
+class uses (`uniqueMember` for `groupOfUniqueNames`, `member` for `groupOfNames`). RFC 4519 makes
+that attribute mandatory for both classes, and some servers enforce it (OpenLDAP with
+`core.schema` does). On such a server an empty add fails with `InvalidArgument` and nothing is
+written. Set `--create-group-placeholder-member` to a dedicated DN, for example
+`cn=nobody,dc=example,dc=com`, and `create_group` includes it as the first member. Sync skips that
+exact DN in every group's membership, so it never appears as a grant. Do not use a real user's DN or
+the group's own DN. Because the placeholder stays in the group, a revoke of the last real member
+still succeeds on a strict server.
 
 ## `update_profile`
 

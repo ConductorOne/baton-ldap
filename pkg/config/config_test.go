@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -405,4 +406,123 @@ func TestEffectiveGroupMemberAttribute(t *testing.T) {
 	require.Equal(t, GroupMemberAttributeAuto, (&Config{}).EffectiveGroupMemberAttribute())
 	require.Equal(t, GroupMemberAttributeAuto, (&Config{GroupMemberAttribute: GroupMemberAttributeAuto}).EffectiveGroupMemberAttribute())
 	require.Equal(t, GroupMemberAttributeMemberUID, (&Config{GroupMemberAttribute: GroupMemberAttributeMemberUID}).EffectiveGroupMemberAttribute())
+}
+
+func TestNewCreateGroupConfig(t *testing.T) {
+	tests := []struct {
+		name            string
+		yaml            string
+		wantErr         string
+		wantObjectClass string
+		wantPlaceholder string
+	}{
+		{
+			name: "unset by default",
+		},
+		{
+			name:            "groupOfNames under auto",
+			yaml:            "create-group-object-class: groupOfNames\n",
+			wantObjectClass: CreateGroupObjectClassGroupOfNames,
+		},
+		{
+			name:            "casing is normalized",
+			yaml:            "create-group-object-class: GROUPOFUNIQUENAMES\n",
+			wantObjectClass: CreateGroupObjectClassGroupOfUniqueNames,
+		},
+		{
+			name:            "groupOfNames matches a member pin",
+			yaml:            "group-member-attribute: member\ncreate-group-object-class: groupOfNames\n",
+			wantObjectClass: CreateGroupObjectClassGroupOfNames,
+		},
+		{
+			name:    "groupOfUniqueNames conflicts with a member pin",
+			yaml:    "group-member-attribute: member\ncreate-group-object-class: groupOfUniqueNames\n",
+			wantErr: "create-group-object-class",
+		},
+		{
+			name:    "groupOfNames conflicts with a uniqueMember pin",
+			yaml:    "group-member-attribute: uniqueMember\ncreate-group-object-class: groupOfNames\n",
+			wantErr: "create-group-object-class",
+		},
+		{
+			name:    "any class is rejected under a memberUid pin",
+			yaml:    "group-member-attribute: memberUid\ncreate-group-object-class: groupOfNames\n",
+			wantErr: "memberUid",
+		},
+		{
+			name: "a memberUid pin without a class still starts",
+			yaml: "group-member-attribute: memberUid\n",
+		},
+		{
+			name:    "an unsupported class is rejected",
+			yaml:    "create-group-object-class: posixGroup\n",
+			wantErr: "is not supported",
+		},
+		{
+			name:            "placeholder is canonicalized",
+			yaml:            "create-group-placeholder-member: \"CN=nobody, DC=example, DC=org\"\n",
+			wantPlaceholder: "cn=nobody,dc=example,dc=org",
+		},
+		{
+			name:    "an unparseable placeholder is rejected",
+			yaml:    "create-group-placeholder-member: notadn\n",
+			wantErr: "create-group-placeholder-member",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := userStatusConfig(t, tc.yaml)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantObjectClass, cfg.CreateGroupObjectClass)
+			if tc.wantPlaceholder == "" {
+				require.Nil(t, cfg.CreateGroupPlaceholderMember)
+			} else {
+				require.Equal(t, tc.wantPlaceholder, cfg.CreateGroupPlaceholderMember.String())
+			}
+		})
+	}
+}
+
+func TestResolveCreateGroupObjectClass(t *testing.T) {
+	tests := []struct {
+		name        string
+		pin         string
+		configured  string
+		want        string
+		unsupported bool
+		wantErr     bool
+	}{
+		{"auto default", "", "", CreateGroupObjectClassGroupOfUniqueNames, false, false},
+		{"explicit auto default", GroupMemberAttributeAuto, "", CreateGroupObjectClassGroupOfUniqueNames, false, false},
+		{"auto with groupOfNames", "", CreateGroupObjectClassGroupOfNames, CreateGroupObjectClassGroupOfNames, false, false},
+		{"auto with groupOfUniqueNames", "", CreateGroupObjectClassGroupOfUniqueNames, CreateGroupObjectClassGroupOfUniqueNames, false, false},
+		{"member default", GroupMemberAttributeMember, "", CreateGroupObjectClassGroupOfNames, false, false},
+		{"member with groupOfNames", GroupMemberAttributeMember, CreateGroupObjectClassGroupOfNames, CreateGroupObjectClassGroupOfNames, false, false},
+		{"member with groupOfUniqueNames", GroupMemberAttributeMember, CreateGroupObjectClassGroupOfUniqueNames, "", false, true},
+		{"uniqueMember default", GroupMemberAttributeUniqueMember, "", CreateGroupObjectClassGroupOfUniqueNames, false, false},
+		{"uniqueMember with groupOfUniqueNames", GroupMemberAttributeUniqueMember, CreateGroupObjectClassGroupOfUniqueNames, CreateGroupObjectClassGroupOfUniqueNames, false, false},
+		{"uniqueMember with groupOfNames", GroupMemberAttributeUniqueMember, CreateGroupObjectClassGroupOfNames, "", false, true},
+		{"memberUid is unsupported", GroupMemberAttributeMemberUID, "", "", true, true},
+		{"memberUid with a class", GroupMemberAttributeMemberUID, CreateGroupObjectClassGroupOfNames, "", false, true},
+		{"unsupported class", "", "posixGroup", "", false, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveCreateGroupObjectClass(tc.pin, tc.configured)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Equal(t, tc.unsupported, errors.Is(err, ErrCreateGroupUnsupported))
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
