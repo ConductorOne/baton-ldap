@@ -413,6 +413,22 @@ func (c *Client) LdapAdd(ctx context.Context, addRequest *ldap.AddRequest) error
 	return nil
 }
 
+func (c *Client) LdapAddStrict(ctx context.Context, addRequest *ldap.AddRequest) error {
+	l := ctxzap.Extract(ctx)
+
+	l.Debug("adding ldap entry (strict)", zap.String("DN", addRequest.DN))
+
+	err := c.getConnection(ctx, false, func(client *ldapConn) error {
+		return client.conn.Add(addRequest)
+	})
+	if err != nil {
+		l.Debug("baton-ldap: client failed to add record (strict)", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func (c *Client) LdapModify(ctx context.Context, modifyRequest *ldap.ModifyRequest) error {
 	l := ctxzap.Extract(ctx)
 
