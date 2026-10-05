@@ -149,6 +149,8 @@ with the same resource ID that sync gives it).
   existing group is returned only if it has the class that holds the pinned attribute
   (`groupOfNames` or `groupOfUniqueNames`); otherwise the action fails with `FailedPrecondition`,
   because every later grant to that group would fail.
+- `created` is best-effort after a transport retry: if the connection drops after the server commits
+  the add, the connector retries, sees the entry, and reports `created=false`.
 - The object class is a connector setting, not an argument. `--create-group-object-class` selects
   `groupOfUniqueNames` or `groupOfNames`. When it is unset, the class follows
   `--group-member-attribute`: `groupOfNames` for `member`, otherwise `groupOfUniqueNames`. A class

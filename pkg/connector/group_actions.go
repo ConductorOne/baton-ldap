@@ -127,8 +127,10 @@ func createGroupActionSchema() *v2.BatonActionSchema {
 			{
 				Name:        returnFieldCreated,
 				DisplayName: "Created",
-				Description: "True when this call created the group; false when a group already existed at the DN.",
-				Field:       &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
+				Description: "True when this call created the group; false when a group already existed at the DN. " +
+					"Best-effort after a transport retry: if the connection dropped after the server committed the add, " +
+					"the retry sees the entry and reports false.",
+				Field: &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
 			},
 			{
 				Name:        returnFieldGroupDN,

@@ -180,15 +180,48 @@ func TestCreateGroup(t *testing.T) {
 	l, err := createConnector(ctx, t, "simple.ldif")
 	require.NoError(t, err)
 
+	setPlaceholder := func(t *testing.T, dn *ldap3.DN) {
+		t.Helper()
+		previous := l.config.CreateGroupPlaceholderMember
+		l.config.CreateGroupPlaceholderMember = dn
+		t.Cleanup(func() { l.config.CreateGroupPlaceholderMember = previous })
+	}
 	withPlaceholder := func(t *testing.T) {
 		t.Helper()
 		placeholder, err := ldap.CanonicalizeDN(createGroupPlaceholderDN)
 		require.NoError(t, err)
-		l.config.CreateGroupPlaceholderMember = placeholder
-		t.Cleanup(func() { l.config.CreateGroupPlaceholderMember = nil })
+		setPlaceholder(t, placeholder)
+	}
+	withoutPlaceholder := func(t *testing.T) {
+		t.Helper()
+		setPlaceholder(t, nil)
+	}
+	withPin := func(t *testing.T, pin string) {
+		t.Helper()
+		previous := l.config.GroupMemberAttribute
+		l.config.GroupMemberAttribute = pin
+		t.Cleanup(func() { l.config.GroupMemberAttribute = previous })
+	}
+	withObjectClass := func(t *testing.T, objectClass string) {
+		t.Helper()
+		previous := l.config.CreateGroupObjectClass
+		l.config.CreateGroupObjectClass = objectClass
+		t.Cleanup(func() { l.config.CreateGroupObjectClass = previous })
+	}
+	seedGroupOfUniqueNames := func(t *testing.T, name string) string {
+		t.Helper()
+		dn := "cn=" + name + ",ou=groups,dc=example,dc=org"
+		seed := ldap3.NewAddRequest(dn, nil)
+		seed.Attribute(ldapAttrObjectClass, []string{ldapObjectClassTop, config.CreateGroupObjectClassGroupOfUniqueNames})
+		seed.Attribute(attrGroupCommonName, []string{name})
+		seed.Attribute(attrGroupUniqueMember, []string{"cn=roger,ou=users,dc=example,dc=org"})
+		require.NoError(t, l.client.LdapAdd(ctx, seed))
+		return dn
 	}
 
 	t.Run("memberless add is rejected with guidance and writes nothing", func(t *testing.T) {
+		withoutPlaceholder(t)
+
 		_, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "memberless"}))
 		require.Error(t, err)
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -254,7 +287,7 @@ func TestCreateGroup(t *testing.T) {
 			if placeholder {
 				withPlaceholder(t)
 			} else {
-				l.config.CreateGroupPlaceholderMember = nil
+				withoutPlaceholder(t)
 			}
 			rv, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "staff"}))
 			require.NoError(t, err)
@@ -263,30 +296,27 @@ func TestCreateGroup(t *testing.T) {
 	})
 
 	t.Run("adopts an existing group without a placeholder", func(t *testing.T) {
-		seed := ldap3.NewAddRequest("cn=preexisting,ou=groups,dc=example,dc=org", nil)
-		seed.Attribute(ldapAttrObjectClass, []string{ldapObjectClassTop, config.CreateGroupObjectClassGroupOfUniqueNames})
-		seed.Attribute(attrGroupCommonName, []string{"preexisting"})
-		seed.Attribute(attrGroupUniqueMember, []string{"cn=roger,ou=users,dc=example,dc=org"})
-		require.NoError(t, l.client.LdapAdd(ctx, seed))
+		withoutPlaceholder(t)
+		dn := seedGroupOfUniqueNames(t, "preexisting")
 
 		rv, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "preexisting"}))
 		require.NoError(t, err)
 		require.True(t, rv.GetFields()["success"].GetBoolValue())
 		require.False(t, rv.GetFields()[returnFieldCreated].GetBoolValue())
-		require.Equal(t, "cn=preexisting,ou=groups,dc=example,dc=org", rv.GetFields()[returnFieldGroupDN].GetStringValue())
+		require.Equal(t, dn, rv.GetFields()[returnFieldGroupDN].GetStringValue())
 	})
 
 	t.Run("a pin refuses to adopt a group whose class cannot hold it", func(t *testing.T) {
 		withPlaceholder(t)
-		l.config.GroupMemberAttribute = config.GroupMemberAttributeUniqueMember
-		t.Cleanup(func() { l.config.GroupMemberAttribute = "" })
+		withPin(t, config.GroupMemberAttributeUniqueMember)
+		seedGroupOfUniqueNames(t, "pinadoptable")
 
 		_, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "staff"}))
 		require.Error(t, err)
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.Contains(t, err.Error(), config.CreateGroupObjectClassGroupOfUniqueNames)
 
-		rv, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "preexisting"}))
+		rv, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "pinadoptable"}))
 		require.NoError(t, err)
 		require.False(t, rv.GetFields()[returnFieldCreated].GetBoolValue())
 	})
@@ -331,7 +361,7 @@ func TestCreateGroup(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, codes.AlreadyExists, status.Code(err))
 
-		l.config.CreateGroupPlaceholderMember = nil
+		withoutPlaceholder(t)
 		_, _, err = l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "notagroup"}))
 		require.Error(t, err)
 		require.Equal(t, codes.AlreadyExists, status.Code(err))
@@ -339,8 +369,7 @@ func TestCreateGroup(t *testing.T) {
 
 	t.Run("creates a groupOfNames when configured", func(t *testing.T) {
 		withPlaceholder(t)
-		l.config.CreateGroupObjectClass = config.CreateGroupObjectClassGroupOfNames
-		t.Cleanup(func() { l.config.CreateGroupObjectClass = "" })
+		withObjectClass(t, config.CreateGroupObjectClassGroupOfNames)
 
 		_, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "names"}))
 		require.NoError(t, err)
@@ -371,8 +400,7 @@ func TestCreateGroup(t *testing.T) {
 
 	t.Run("a grant under a member pin lands on member of a groupOfNames", func(t *testing.T) {
 		withPlaceholder(t)
-		l.config.GroupMemberAttribute = config.GroupMemberAttributeMember
-		t.Cleanup(func() { l.config.GroupMemberAttribute = "" })
+		withPin(t, config.GroupMemberAttributeMember)
 
 		rv, _, err := l.createGroup(ctx, createGroupArgs(t, map[string]interface{}{"name": "pinnedmember"}))
 		require.NoError(t, err)
