@@ -64,13 +64,13 @@ var (
 		field.WithDefaultValue(GroupMemberAttributeAuto))
 
 	createGroupObjectClassField = field.StringField("create-group-object-class",
-		field.WithDisplayName("Create group object class"),
+		field.WithDisplayName("Object class for created groups"),
 		field.WithDescription("The structural object class the create_group action gives a new group: \"groupOfUniqueNames\" or \"groupOfNames\". "+
 			"Unset by default, which follows group-member-attribute: \"groupOfNames\" when it is pinned to \"member\", otherwise "+
 			"\"groupOfUniqueNames\". A class that cannot hold the pinned attribute is rejected at startup, and create_group is not "+
 			"offered when group-member-attribute is \"memberUid\"."))
 	createGroupPlaceholderMemberField = field.StringField("create-group-placeholder-member",
-		field.WithDisplayName("Create group placeholder member"),
+		field.WithDisplayName("Placeholder member for created groups"),
 		field.WithDescription("Optional DN that the create_group action writes as the first member of a new group, for directories whose "+
 			"schema refuses a group with no member. Use a dedicated entry, for example 'cn=nobody,dc=example,dc=com'. Sync does not "+
 			"report this DN as a group member, so a real user's DN would hide that user's memberships in every group. Set it on every "+
