@@ -160,6 +160,13 @@ with the same resource ID that sync gives it).
 - **Active Directory is not supported.** An AD security group needs `objectClass=group` and
   attributes this action does not write.
 - The bind account must have permission to create entries at the target location.
+- `--create-group-placeholder-member` must be set on **every** connector invocation, sync as well as
+  actions, for as long as any group holds the placeholder. Sync skips the placeholder only when the
+  setting is present. If the setting is removed or changed later, each group's placeholder
+  membership appears as a grant to a user that does not exist.
+- Use a dedicated entry as the placeholder, not a real user. Sync matches the placeholder by DN and
+  cannot tell it from a real membership, so a real user's DN would hide that user's genuine
+  memberships in every group.
 
 **Group membership provisioning.** `create_group` writes no members, because membership is managed
 through the normal grant path after the group exists: a grant writes the attribute that the group's
