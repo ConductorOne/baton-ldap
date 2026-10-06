@@ -22,7 +22,6 @@ import (
 const (
 	actionNameCreateGroup = "create_group"
 
-	returnFieldCreated = "created"
 	returnFieldGroupDN = "group_dn"
 	returnFieldGroup   = "group"
 )
@@ -66,31 +65,6 @@ func memberAttributeForObjectClass(objectClass string) string {
 	return attrGroupUniqueMember
 }
 
-func isGroupEntry(entry *ldap.Entry) bool {
-	for _, objectClass := range entry.GetEqualFoldAttributeValues(ldapAttrObjectClass) {
-		for name, resourceType := range objectClassesToResourceTypes {
-			if resourceType == resourceTypeGroup && strings.EqualFold(name, objectClass) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func canHoldPinnedMemberAttribute(entry *ldap.Entry, groupMemberAttribute, requiredObjectClass string) bool {
-	switch groupMemberAttribute {
-	case config.GroupMemberAttributeMember, config.GroupMemberAttributeUniqueMember:
-	default:
-		return true
-	}
-	for _, objectClass := range entry.GetEqualFoldAttributeValues(ldapAttrObjectClass) {
-		if strings.EqualFold(objectClass, requiredObjectClass) {
-			return true
-		}
-	}
-	return false
-}
-
 func createGroupActionSchema() *v2.BatonActionSchema {
 	return &v2.BatonActionSchema{
 		Name:        actionNameCreateGroup,
@@ -123,14 +97,6 @@ func createGroupActionSchema() *v2.BatonActionSchema {
 				Name:        "success",
 				DisplayName: "Success",
 				Field:       &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
-			},
-			{
-				Name:        returnFieldCreated,
-				DisplayName: "Created",
-				Description: "True when this call created the group; false when a group already existed at the DN. " +
-					"Best-effort after a transport retry: if the connection dropped after the server committed the add, " +
-					"the retry sees the entry and reports false.",
-				Field: &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
 			},
 			{
 				Name:        returnFieldGroupDN,
@@ -183,15 +149,12 @@ func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structp
 		addReq.Attribute(memberAttributeForObjectClass(objectClass), []string{placeholder.String()})
 	}
 
-	created := true
-	var memberRequiredErr error
 	if err := l.client.LdapAddStrict(ctx, addReq); err != nil {
 		switch {
 		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultEntryAlreadyExists):
-			created = false
+			return nil, nil, status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry already exists at %q", groupDN)
 		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultObjectClassViolation) && placeholder == nil:
-			created = false
-			memberRequiredErr = err
+			return nil, nil, l.memberRequiredError(ctx, groupDN, objectClass, err)
 		default:
 			log.Warn("create_group: add failed", zap.String("dn", groupDN), zap.Error(err))
 			return nil, nil, status.Errorf(ldapResultCodeToGRPC(err), "ldap-connector: create_group: failed to add group %q: %v", groupDN, err)
@@ -200,22 +163,8 @@ func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structp
 
 	entry, err := l.client.LdapGetRaw(ctx, groupDN, ldapFilterAnyObject, createGroupReadBackAttrs)
 	if err != nil {
-		if memberRequiredErr != nil && lookupErrToGRPC(err) == codes.NotFound {
-			log.Warn("create_group: schema requires a member", zap.String("dn", groupDN), zap.Error(memberRequiredErr))
-			return nil, nil, status.Errorf(codes.InvalidArgument,
-				"ldap-connector: create_group: this directory's schema requires at least one member for %s; set create-group-placeholder-member: %v",
-				objectClass, memberRequiredErr)
-		}
 		log.Warn("create_group: read-back failed", zap.String("dn", groupDN), zap.Error(err))
 		return nil, nil, status.Errorf(lookupErrToGRPC(err), "ldap-connector: create_group: failed to read group %q: %v", groupDN, err)
-	}
-	if !isGroupEntry(entry) {
-		return nil, nil, status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry that is not a group already exists at %q", entry.DN)
-	}
-	if !created && !canHoldPinnedMemberAttribute(entry, l.config.GroupMemberAttribute, objectClass) {
-		return nil, nil, status.Errorf(codes.FailedPrecondition,
-			"ldap-connector: create_group: the group at %q is not a %s, so it cannot hold group-member-attribute %s",
-			entry.DN, objectClass, l.config.GroupMemberAttribute)
 	}
 
 	resource, err := groupResource(ctx, entry)
@@ -227,11 +176,28 @@ func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structp
 		return nil, nil, status.Errorf(codes.Internal, "ldap-connector: create_group: %v", err)
 	}
 
-	log.Info("create_group: success", zap.String("dn", entry.DN), zap.Bool("created", created))
+	log.Info("create_group: success", zap.String("dn", entry.DN))
 
 	return actions.NewReturnValues(true,
-		actions.NewBoolReturnField(returnFieldCreated, created),
 		actions.NewStringReturnField(returnFieldGroupDN, entry.DN),
 		groupField,
 	), nil, nil
+}
+
+func (l *LDAP) memberRequiredError(ctx context.Context, groupDN, objectClass string, addErr error) error {
+	log := ctxzap.Extract(ctx)
+
+	_, err := l.client.LdapGetRaw(ctx, groupDN, ldapFilterAnyObject, []string{ldapAttrObjectClass})
+	switch {
+	case err == nil:
+		return status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry already exists at %q", groupDN)
+	case lookupErrToGRPC(err) == codes.NotFound:
+		log.Warn("create_group: schema requires a member", zap.String("dn", groupDN), zap.Error(addErr))
+		return status.Errorf(codes.InvalidArgument,
+			"ldap-connector: create_group: this directory's schema requires at least one member for %s; set create-group-placeholder-member: %v",
+			objectClass, addErr)
+	default:
+		log.Warn("create_group: read-back failed", zap.String("dn", groupDN), zap.Error(err))
+		return status.Errorf(lookupErrToGRPC(err), "ldap-connector: create_group: failed to read %q: %v", groupDN, err)
+	}
 }

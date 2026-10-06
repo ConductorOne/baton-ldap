@@ -134,23 +134,16 @@ Creates an LDAP group under a parent container in the group search DN.
 | `parent_dn` | no | The container DN to create the group under. Defaults to the configured `group-search-dn`. |
 | `description` | no | Sets the `description` attribute on the group. |
 
-Returns `success`, `created` (`true` when this call created the group, `false` when a group already
-existed at the DN), `group_dn` (the DN as the directory returns it) and `group` (the group resource,
-with the same resource ID that sync gives it).
+Returns `success` (`true` only when this call created the group), `group_dn` (the DN as the
+directory returns it) and `group` (the group resource, with the same resource ID that sync gives it).
 
 **Notes:**
 - The parent DN must be at or under `group-search-dn` (which defaults to `base-dn`), or the action is
   rejected and nothing is written. A group outside `group-search-dn` would never appear in sync. To
   create groups elsewhere, widen `group-search-dn`.
 - The RDN attribute is always `cn`.
-- The action is idempotent. When a group already exists at the DN, the action returns it with
-  `created=false`. When the DN holds an entry that is not a group, the action fails with
-  `AlreadyExists`. When `--group-member-attribute` is pinned to `member` or `uniqueMember`, an
-  existing group is returned only if it has the class that holds the pinned attribute
-  (`groupOfNames` or `groupOfUniqueNames`); otherwise the action fails with `FailedPrecondition`,
-  because every later grant to that group would fail.
-- `created` is best-effort after a transport retry: if the connection drops after the server commits
-  the add, the connector retries, sees the entry, and reports `created=false`.
+- The action fails with `AlreadyExists` when an entry already exists at the DN, whether or not that
+  entry is a group. It never returns an entry it did not create.
 - The object class is a connector setting, not an argument. `--create-group-object-class` selects
   `groupOfUniqueNames` or `groupOfNames`. When it is unset, the class follows
   `--group-member-attribute`: `groupOfNames` for `member`, otherwise `groupOfUniqueNames`. A class
