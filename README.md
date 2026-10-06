@@ -144,6 +144,9 @@ directory returns it) and `group` (the group resource, with the same resource ID
 - The RDN attribute is always `cn`.
 - The action fails with `AlreadyExists` when an entry already exists at the DN, whether or not that
   entry is a group. It never returns an entry it did not create.
+- After a transport failure the connector retries the add; if the first attempt was committed, the
+  action reports AlreadyExists although this call created the group. On AlreadyExists, check the
+  entry at the DN (named in the error) before treating it as a collision.
 - The object class is a connector setting, not an argument. `--create-group-object-class` selects
   `groupOfUniqueNames` or `groupOfNames`. When it is unset, the class follows
   `--group-member-attribute`: `groupOfNames` for `member`, otherwise `groupOfUniqueNames`. A class
