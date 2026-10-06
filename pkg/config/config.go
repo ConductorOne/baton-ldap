@@ -75,7 +75,7 @@ var (
 			"schema refuses a group with no member. Use a dedicated entry, for example 'cn=nobody,dc=example,dc=com'. Sync does not "+
 			"report this DN as a group member, so a real user's DN would hide that user's memberships in every group. Set it on every "+
 			"connector invocation, sync as well as actions, for as long as any group holds it; if it is removed or changed, those "+
-			"memberships appear as grants to a user that does not exist."))
+			"memberships each appear as a user grant for the placeholder DN."))
 )
 
 const (

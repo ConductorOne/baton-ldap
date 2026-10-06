@@ -163,7 +163,7 @@ with the same resource ID that sync gives it).
 - `--create-group-placeholder-member` must be set on **every** connector invocation, sync as well as
   actions, for as long as any group holds the placeholder. Sync skips the placeholder only when the
   setting is present. If the setting is removed or changed later, each group's placeholder
-  membership appears as a grant to a user that does not exist.
+  membership appears as a user grant for the placeholder DN.
 - Use a dedicated entry as the placeholder, not a real user. Sync matches the placeholder by DN and
   cannot tell it from a real membership, so a real user's DN would hide that user's genuine
   memberships in every group.
