@@ -251,7 +251,9 @@ func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 	innerGrant := grantFor(ctx, t, gb, group, fixtureInnerDN)
 	innerAnnotations := annotations.Annotations(innerGrant.Annotations)
 	expandable := &v2.GrantExpandable{}
-	require.True(t, innerAnnotations.Contains(expandable),
+	found, err := innerAnnotations.Pick(expandable)
+	require.NoError(t, err)
+	require.True(t, found,
 		"the read path reports the nested membership as a grant on the inner group, which C1 expands; the connector does not expand it itself")
 	require.Equal(t, []string{"group:" + fixtureInnerDN + ":member"}, expandable.EntitlementIds,
 		"the expandable annotation must name the inner group's own membership entitlement, which is what C1 expands")
