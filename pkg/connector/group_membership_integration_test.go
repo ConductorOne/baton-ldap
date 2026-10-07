@@ -229,8 +229,8 @@ func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 
 	require.Equal(t, before, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember),
 		"the directory must not be touched")
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN,
-		"the read path still reports the membership through expansion; revoking it means revoking it at the source group")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureInnerDN,
+		"the read path reports the nested membership as a grant on the inner group, which C1 expands; the connector does not expand it itself")
 
 	// The source group's own membership is a direct value, and revoking it there is
 	// the operation that works.
@@ -239,7 +239,8 @@ func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, sourceEntitlement))
 	require.NoError(t, err)
 	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureInnerDN, attrGroupMember), fixtureCarolDN)
-	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureInnerDN,
+		"revoking at the source group does not change the nesting: the outer group still holds the inner group")
 }
 
 // TestPrimaryGroupRevokeReportsPrimaryGroup covers the other guard: the
