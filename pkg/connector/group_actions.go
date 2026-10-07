@@ -1,0 +1,203 @@
+package connector
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/conductorone/baton-ldap/pkg/config"
+	"github.com/conductorone/baton-ldap/pkg/ldap"
+	config_sdk "github.com/conductorone/baton-sdk/pb/c1/config/v1"
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/actions"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
+	ldap3 "github.com/go-ldap/ldap/v3"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+const (
+	actionNameCreateGroup = "create_group"
+
+	returnFieldGroupDN = "group_dn"
+	returnFieldGroup   = "group"
+)
+
+var createGroupReadBackAttrs = []string{attrGroupCommonName, attrGroupDescription, attrGroupIdPosix, ldapAttrObjectClass}
+
+func buildGroupDN(name, parentDN string, scopeDN *ldap3.DN) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if scopeDN == nil {
+		return "", fmt.Errorf("group-search-dn must be configured")
+	}
+	rawScope := scopeDN.String()
+	scope, err := ldap.CanonicalizeDN(rawScope)
+	if err != nil {
+		return "", fmt.Errorf("invalid group-search-dn %q: %w", rawScope, err)
+	}
+
+	parentDN = strings.TrimSpace(parentDN)
+	parent := scope
+	if parentDN != "" {
+		parent, err = ldap.CanonicalizeDN(parentDN)
+		if err != nil {
+			return "", fmt.Errorf("invalid parent_dn %q: %w", parentDN, err)
+		}
+	}
+
+	if err := assertDNInScope(parent, scope); err != nil {
+		return "", fmt.Errorf("parent_dn %q is outside the configured group-search-dn %q", parent.String(), scope.String())
+	}
+
+	return fmt.Sprintf("%s=%s,%s", attrGroupCommonName, ldap3.EscapeDN(name), parent.String()), nil
+}
+
+func memberAttributeForObjectClass(objectClass string) string {
+	if objectClass == config.CreateGroupObjectClassGroupOfNames {
+		return attrGroupMember
+	}
+	return attrGroupUniqueMember
+}
+
+func createGroupActionSchema() *v2.BatonActionSchema {
+	return &v2.BatonActionSchema{
+		Name:        actionNameCreateGroup,
+		DisplayName: "Create Group",
+		Description: "Create an LDAP group under a parent container within the configured group search DN.",
+		ActionType:  []v2.ActionType{v2.ActionType_ACTION_TYPE_RESOURCE_CREATE},
+		Arguments: []*config_sdk.Field{
+			{
+				Name:        argName,
+				DisplayName: "Name",
+				Description: "The group name (used as the cn attribute and RDN).",
+				IsRequired:  true,
+				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
+			},
+			{
+				Name:        argParentDN,
+				DisplayName: "Parent DN",
+				Description: "The container DN under which to create the group. Defaults to the configured group search DN if empty.",
+				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
+			},
+			{
+				Name:        argDescription,
+				DisplayName: "Description",
+				Description: "Optional description attribute for the group.",
+				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
+			},
+		},
+		ReturnTypes: []*config_sdk.Field{
+			{
+				Name:        "success",
+				DisplayName: "Success",
+				Field:       &config_sdk.Field_BoolField{BoolField: &config_sdk.BoolField{}},
+			},
+			{
+				Name:        returnFieldGroupDN,
+				DisplayName: "Group DN",
+				Description: "The distinguished name of the group, as the directory returns it.",
+				Field:       &config_sdk.Field_StringField{StringField: &config_sdk.StringField{}},
+			},
+			{
+				Name:        returnFieldGroup,
+				DisplayName: "Group",
+				Description: "The group resource, as sync reports it.",
+				Field:       &config_sdk.Field_ResourceField{ResourceField: &config_sdk.ResourceField{}},
+			},
+		},
+	}
+}
+
+func (l *LDAP) createGroup(ctx context.Context, args *structpb.Struct) (*structpb.Struct, annotations.Annotations, error) {
+	log := ctxzap.Extract(ctx)
+
+	objectClass, err := config.ResolveCreateGroupObjectClass(l.config.GroupMemberAttribute, l.config.CreateGroupObjectClass)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.FailedPrecondition, "ldap-connector: create_group: %v", err)
+	}
+
+	name, err := actions.RequireStringArg(args, argName)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: create_group: %v", err)
+	}
+	name = strings.TrimSpace(name)
+	parentArg, _ := actions.GetStringArg(args, argParentDN)
+	description, _ := actions.GetStringArg(args, argDescription)
+	description = strings.TrimSpace(description)
+
+	groupDN, err := buildGroupDN(name, parentArg, l.config.GroupSearchDN)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "ldap-connector: create_group: %v", err)
+	}
+
+	log.Debug("creating group", zap.String("dn", groupDN), zap.String("object_class", objectClass))
+
+	addReq := ldap3.NewAddRequest(groupDN, nil)
+	addReq.Attribute(ldapAttrObjectClass, []string{ldapObjectClassTop, objectClass})
+	addReq.Attribute(attrGroupCommonName, []string{name})
+	if description != "" {
+		addReq.Attribute(attrGroupDescription, []string{description})
+	}
+	placeholder := l.config.CreateGroupPlaceholderMember
+	if placeholder != nil {
+		addReq.Attribute(memberAttributeForObjectClass(objectClass), []string{placeholder.String()})
+	}
+
+	if err := l.client.LdapAddStrict(ctx, addReq); err != nil {
+		switch {
+		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultEntryAlreadyExists):
+			return nil, nil, status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry already exists at %q", groupDN)
+		case ldap3.IsErrorWithCode(err, ldap3.LDAPResultObjectClassViolation) && placeholder == nil:
+			return nil, nil, l.memberRequiredError(ctx, groupDN, objectClass, err)
+		default:
+			log.Warn("create_group: add failed", zap.String("dn", groupDN), zap.Error(err))
+			return nil, nil, status.Errorf(ldapResultCodeToGRPC(err), "ldap-connector: create_group: failed to add group %q: %v", groupDN, err)
+		}
+	}
+
+	entry, err := l.client.LdapGetRaw(ctx, groupDN, ldapFilterAnyObject, createGroupReadBackAttrs)
+	if err != nil {
+		log.Warn("create_group: read-back failed", zap.String("dn", groupDN), zap.Error(err))
+		return nil, nil, status.Errorf(lookupErrToGRPC(err), "ldap-connector: create_group: failed to read group %q: %v", groupDN, err)
+	}
+
+	resource, err := groupResource(ctx, entry)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "ldap-connector: create_group: failed to build group resource for %q: %v", entry.DN, err)
+	}
+	groupField, err := actions.NewResourceReturnField(returnFieldGroup, resource)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "ldap-connector: create_group: %v", err)
+	}
+
+	log.Info("create_group: success", zap.String("dn", entry.DN))
+
+	return actions.NewReturnValues(true,
+		actions.NewStringReturnField(returnFieldGroupDN, entry.DN),
+		groupField,
+	), nil, nil
+}
+
+func (l *LDAP) memberRequiredError(ctx context.Context, groupDN, objectClass string, addErr error) error {
+	log := ctxzap.Extract(ctx)
+
+	_, err := l.client.LdapGetRaw(ctx, groupDN, ldapFilterAnyObject, []string{ldapAttrObjectClass})
+	switch {
+	case err == nil:
+		return status.Errorf(codes.AlreadyExists, "ldap-connector: create_group: an entry already exists at %q", groupDN)
+	case lookupErrToGRPC(err) == codes.NotFound:
+		log.Warn("create_group: schema requires a member", zap.String("dn", groupDN), zap.Error(addErr))
+		return status.Errorf(codes.InvalidArgument,
+			"ldap-connector: create_group: this directory's schema requires at least one member for %s; set create-group-placeholder-member: %v",
+			objectClass, addErr)
+	default:
+		log.Warn("create_group: read-back failed", zap.String("dn", groupDN), zap.Error(err))
+		return status.Errorf(lookupErrToGRPC(err), "ldap-connector: create_group: failed to read %q: %v", groupDN, err)
+	}
+}

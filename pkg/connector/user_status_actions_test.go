@@ -393,6 +393,7 @@ func TestGlobalActionsUserStatusRegistration(t *testing.T) {
 			require.NoError(t, l.GlobalActions(context.Background(), reg))
 
 			require.Contains(t, reg.schemas, actionNameCreateOU)
+			require.Contains(t, reg.schemas, actionNameCreateGroup)
 			if tc.wantDisable {
 				require.Contains(t, reg.schemas, actionNameDisableUser)
 			} else {
@@ -403,7 +404,7 @@ func TestGlobalActionsUserStatusRegistration(t *testing.T) {
 			} else {
 				require.NotContains(t, reg.schemas, actionNameEnableUser)
 			}
-			require.Len(t, reg.schemas, 1+boolToInt(tc.wantDisable)+boolToInt(tc.wantEnable))
+			require.Len(t, reg.schemas, 2+boolToInt(tc.wantDisable)+boolToInt(tc.wantEnable))
 		})
 	}
 }
