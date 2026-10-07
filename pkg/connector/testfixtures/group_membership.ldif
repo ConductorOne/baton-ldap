@@ -67,8 +67,9 @@ dn: cn=inner,ou=groups,dc=example,dc=org
 objectclass: groupOfNames
 objectclass: top
 cn: inner
-description: Inner group (holds carol)
+description: Inner group (holds carol and bob)
 member: cn=carol,ou=users,dc=example,dc=org
+member: cn=bob,ou=users,dc=example,dc=org
 
 dn: cn=outer,ou=groups,dc=example,dc=org
 objectclass: groupOfNames
