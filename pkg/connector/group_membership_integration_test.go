@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ldap3 "github.com/go-ldap/ldap/v3"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -104,6 +105,24 @@ func grantedPrincipals(ctx context.Context, t *testing.T, gb *groupResourceType,
 	}
 
 	return dns
+}
+
+// grantFor returns the grant on group whose principal is principalDN, so a test
+// can read the annotations the connector attached to it.
+func grantFor(ctx context.Context, t *testing.T, gb *groupResourceType, group *v2.Resource, principalDN string) *v2.Grant {
+	t.Helper()
+
+	grants, _, _, err := gb.Grants(ctx, group, &pagination.Token{})
+	require.NoError(t, err)
+
+	for _, g := range grants {
+		if g.Principal.Id.Resource == principalDN {
+			return g
+		}
+	}
+
+	require.Failf(t, "no grant for principal", "group %s has no grant for %s", group.Id.Resource, principalDN)
+	return nil
 }
 
 // TestGroupOfNamesRevokeRemovesMember is the assertion for the defect this change
@@ -229,8 +248,15 @@ func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 
 	require.Equal(t, before, groupEntryValues(ctx, t, connector, fixtureOuterDN, attrGroupMember),
 		"the directory must not be touched")
-	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN,
-		"the read path still reports the membership through expansion; revoking it means revoking it at the source group")
+	innerGrant := grantFor(ctx, t, gb, group, fixtureInnerDN)
+	innerAnnotations := annotations.Annotations(innerGrant.Annotations)
+	expandable := &v2.GrantExpandable{}
+	found, err := innerAnnotations.Pick(expandable)
+	require.NoError(t, err)
+	require.True(t, found,
+		"the read path reports the nested membership as a grant on the inner group, which C1 expands; the connector does not expand it itself")
+	require.Equal(t, []string{"group:" + fixtureInnerDN + ":member"}, expandable.EntitlementIds,
+		"the expandable annotation must name the inner group's own membership entitlement, which is what C1 expands")
 
 	// The source group's own membership is a direct value, and revoking it there is
 	// the operation that works.
@@ -239,7 +265,10 @@ func TestNestedGroupMembershipIsOutOfScope(t *testing.T) {
 	_, err = gb.Revoke(ctx, membershipGrant(fixtureCarolDN, sourceEntitlement))
 	require.NoError(t, err)
 	require.NotContains(t, groupEntryValues(ctx, t, connector, fixtureInnerDN, attrGroupMember), fixtureCarolDN)
-	require.NotContains(t, grantedPrincipals(ctx, t, gb, group), fixtureCarolDN)
+	require.NotContains(t, grantedPrincipals(ctx, t, gb, sourceGroup), fixtureCarolDN,
+		"the read path must stop reporting carol on the group that held her")
+	require.Contains(t, grantedPrincipals(ctx, t, gb, group), fixtureInnerDN,
+		"revoking at the source group does not change the nesting: the outer group still holds the inner group")
 }
 
 // TestPrimaryGroupRevokeReportsPrimaryGroup covers the other guard: the
