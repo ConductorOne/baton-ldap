@@ -5,10 +5,10 @@ objectclass: organizationalUnit
 objectclass: top
 ou: groups
 
-dn: ou=users,dc=example,dc=org
-objectclass: organizationalUnit
-objectclass: top
-ou: users
+# ou=users is NOT defined here on purpose. The container image seeds it itself, so adding it
+# again fails the container's readiness hook with "Already exists (68)" and the container never
+# starts, which fails every test in this file. The entries below go under the image's ou=users.
+# simple.ldif omits the same entry for the same reason.
 
 dn: cn=alice,ou=users,dc=example,dc=org
 objectclass: inetOrgPerson
