@@ -3,7 +3,7 @@ module github.com/conductorone/baton-ldap
 go 1.27.4
 
 require (
-	github.com/conductorone/baton-sdk v0.46.0
+	github.com/conductorone/baton-sdk v0.46.1
 	github.com/deckarep/golang-set/v2 v2.9.0
 	github.com/ennyjfrick/ruleguard-logfatal v0.0.2
 	github.com/go-ldap/ldap/v3 v3.4.8
@@ -60,9 +60,9 @@ require (
 	github.com/cockroachdb/redact v1.1.8 // indirect
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
-	github.com/conductorone/dpop v0.4.0 // indirect
-	github.com/conductorone/dpop/integrations/dpop_grpc v0.4.0 // indirect
-	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.4.0 // indirect
+	github.com/conductorone/dpop v0.4.1 // indirect
+	github.com/conductorone/dpop/integrations/dpop_grpc v0.4.1 // indirect
+	github.com/conductorone/dpop/integrations/dpop_oauth2 v0.4.1 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
